@@ -206,222 +206,251 @@ fn main() -> ! {
                         let rxbuf = get_ep_rx_offset(&p.USB, ep);
                         let setup = read_usb_sram::<SetupPacket>(rxbuf);
 
-                        match (setup.request_type.data_phase_direction(), setup.request_type.type_(), setup.request_type.recipient(), setup.request) {
-                            (Dir::HostToDevice, RequestTypeType::Standard, Recipient::Device, 5) => {
-                                // SET_ADDRESS
-                                pending_address = Some(setup.value.get() as u8 & 0x7F);
-                                write_usb_sram_16(2, 0);
-                                p.USB.epr[ep].modify(|r, w| unsafe {
-                                    zero_toggles(w)
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                        // Also reception to allow for status
-                                        // packet
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                });
+                        match (setup.request_type.type_(), setup.request_type.recipient()) {
+                            (RequestTypeType::Standard, Recipient::Device) => match (setup.request_type.data_phase_direction(), StdRequestCode::from_u8(setup.request)) {
+                                (Dir::HostToDevice, Some(StdRequestCode::SetAddress)) => {
+                                    pending_address = Some(setup.value.get() as u8 & 0x7F);
+                                    write_usb_sram_16(2, 0);
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+                                            // Also reception to allow for status
+                                            // packet
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
+                                    });
+                                }
+                                (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
+                                    match DescriptorType::from_u16(setup.value.get() >> 8) {
+                                        Some(DescriptorType::Device) => {
+                                            // Device
+                                            write_usb_sram_bytes(64, &[
+                                                18, // bLength
+                                                DescriptorType::Device as u8, // bDescriptorType
+                                                0x00, 0x01, // bcdUSB
+                                                0, // bDeviceClass
+                                                0, // bDeviceSubClass
+                                                0, // bDeviceProtocol
+                                                64, // bMaxPacketSize0
+                                                0xad, 0xde, // idVendor
+                                                0xef, 0xbe, // idProduct
+                                                0x14, 0x03, // bcdDevice
+                                                1, // iManufacturer
+                                                1, // iProduct
+                                                1, // iSerialNumber
+                                                1, // bNumConfigurations
+                                            ]);
+                                            // Update transmittable count.
+                                            write_usb_sram_16(2, 18.min(setup.length.get()));
+                                        }
+                                        Some(DescriptorType::Configuration) => {
+                                            // Configuration
+                                            let config = [
+                                                9, // bLength
+                                                DescriptorType::Configuration as u8, // bDescriptorType
+                                                34, 0, // wTotalLength TODO
+                                                1, // bNumInterfaces
+                                                1, // bConfigurationValue
+                                                1, // iConfiguration (string descriptor)
+                                                0x80, // bmAttributes
+                                                50, // bMaxPower =100mA
 
-                            }
-                            (Dir::HostToDevice, RequestTypeType::Standard, Recipient::Device, 9) => {
-                                // SET_CONFIGURATION
-                                write_usb_sram_16(2, 0);
-                                // Prepare empty report.
-                                write_usb_sram_16(192, 0);
-                                write_usb_sram_16(192 + 2, 0);
-                                write_usb_sram_16(192 + 4, 0);
-                                write_usb_sram_16(192 + 6, 0);
+                                                // interface
+                                                9, // bLength
+                                                DescriptorType::Interface as u8, // bDescriptorType
+                                                0, // bInterfaceNumber
+                                                0, // bAlternateSetting
+                                                1, // bNumEndpoints
+                                                3, // bInterfaceClass
+                                                1, // bInterfaceSubClass
+                                                1, // bInterfaceProtocol
+                                                1, // iInterface (string descriptor)
 
-                                // Set up EP1 for HID
-                                p.USB.epr[1].modify(|r, w| {
-                                    w.ea().bits(1)
-                                        .ep_type().bits(0b11) // INTERRUPT
-                                        .ep_kind().clear_bit() // not used
+                                                // HID
+                                                9, // bLength
+                                                HidClassDescriptorType::Hid as u8, // bDescriptorType
+                                                0x01, 0x01, // bcdHID
+                                                0x00, // bCountryCode
+                                                1, // bNumDescriptors
+                                                0x22, // bDescriptorType (REPORT)
+                                                62, 0, // wItemLength
 
-                                        // Note: these bits are toggled by writing 1 for some goddamn
-                                        // reason, so we set them as follows. I'd love to extract a utility
-                                        // function for this but svd2rust has ensured that this is
-                                        // impossible.
-                                        .dtog_tx().bit(r.dtog_tx().bit()) // clear bit by toggle
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-
-                                        .dtog_rx().bit(r.dtog_rx().bit()) // clear bit by toggle
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL (can't receive)
-                                });
-                                p.USB.epr[0].modify(|r, w| unsafe {
-                                    zero_toggles(w)
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                        // Also reception to allow for status
-                                        // packet
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                });
-
-                            }
-                            (Dir::DeviceToHost, RequestTypeType::Standard, Recipient::Device, 6) => {
-                                // GET_DESCRIPTOR
-                                match DescriptorType::from_u16(setup.value.get() >> 8) {
-                                    Some(DescriptorType::Device) => {
-                                        // Device
-                                        write_usb_sram_bytes(64, &[
-                                            18, // bLength
-                                            DescriptorType::Device as u8, // bDescriptorType
-                                            0x00, 0x01, // bcdUSB
-                                            0, // bDeviceClass
-                                            0, // bDeviceSubClass
-                                            0, // bDeviceProtocol
-                                            64, // bMaxPacketSize0
-                                            0xad, 0xde, // idVendor
-                                            0xef, 0xbe, // idProduct
-                                            0x14, 0x03, // bcdDevice
-                                            1, // iManufacturer
-                                            1, // iProduct
-                                            1, // iSerialNumber
-                                            1, // bNumConfigurations
-                                        ]);
-                                        // Update transmittable count.
-                                        write_usb_sram_16(2, 18.min(setup.length.get()));
-                                    }
-                                    Some(DescriptorType::Configuration) => {
-                                        // Configuration
-                                        let config = [
-                                            9, // bLength
-                                            DescriptorType::Configuration as u8, // bDescriptorType
-                                            34, 0, // wTotalLength TODO
-                                            1, // bNumInterfaces
-                                            1, // bConfigurationValue
-                                            1, // iConfiguration (string descriptor)
-                                            0x80, // bmAttributes
-                                            50, // bMaxPower =100mA
-
-                                            // interface
-                                            9, // bLength
-                                            DescriptorType::Interface as u8, // bDescriptorType
-                                            0, // bInterfaceNumber
-                                            0, // bAlternateSetting
-                                            1, // bNumEndpoints
-                                            3, // bInterfaceClass
-                                            1, // bInterfaceSubClass
-                                            1, // bInterfaceProtocol
-                                            1, // iInterface (string descriptor)
-
-                                            // HID
-                                            9, // bLength
-                                            HidClassDescriptorType::Hid as u8, // bDescriptorType
-                                            0x01, 0x01, // bcdHID
-                                            0x00, // bCountryCode
-                                            1, // bNumDescriptors
-                                            0x22, // bDescriptorType (REPORT)
-                                            62, 0, // wItemLength
-
-                                            // endpoint
-                                            7, // bLength
-                                            DescriptorType::Endpoint as u8, // bDescriptorType
-                                            0x81, // bEndpointAddress
-                                            3, // bmAttributes (INTERRUPT)
-                                            8, 0, // wMaxPacketSize
-                                            1, // bInterval
-                                            ];
-                                        write_usb_sram_bytes(64, &config);
-                                        // Update transmittable count.
-                                        write_usb_sram_16(2, setup.length.get().min(config.len() as u16));
-                                    }
-                                    Some(DescriptorType::String) => {
-                                        // String
-                                        match setup.value.get() & 0xFF {
-                                            0 => {
-                                                // LangID set
-                                                write_usb_sram_bytes(64, &[
-                                                    4, // bLength
-                                                    DescriptorType::String as u8, // bDescriptorType
-                                                    0x09, 0x04 // en_US
-                                                ]);
-                                                // Update transmittable count.
-                                                write_usb_sram_16(2, 4.min(setup.length.get()));
-                                            }
-                                            1 => {
-                                                // The one bogus string
-                                                write_usb_sram_bytes(64, &[
-                                                    16, // bLength
-                                                    DescriptorType::String as u8, // bDescriptorType
-                                                    0x59, 0x00,
-                                                    0x4f, 0x00,
-                                                    0x55, 0x00,
-                                                    0x52, 0x00,
-                                                    0x4d, 0x00,
-                                                    0x4f, 0x00,
-                                                    0x4d, 0x00,
-                                                ]);
-                                                // Update transmittable count.
-                                                write_usb_sram_16(2, 16.min(setup.length.get()));
-                                            }
-                                            _ => {
-                                                write_usb_sram_16(2, 0);
+                                                // endpoint
+                                                7, // bLength
+                                                DescriptorType::Endpoint as u8, // bDescriptorType
+                                                0x81, // bEndpointAddress
+                                                3, // bmAttributes (INTERRUPT)
+                                                8, 0, // wMaxPacketSize
+                                                1, // bInterval
+                                                ];
+                                            write_usb_sram_bytes(64, &config);
+                                            // Update transmittable count.
+                                            write_usb_sram_16(2, setup.length.get().min(config.len() as u16));
+                                        }
+                                        Some(DescriptorType::String) => {
+                                            // String
+                                            match setup.value.get() & 0xFF {
+                                                0 => {
+                                                    // LangID set
+                                                    write_usb_sram_bytes(64, &[
+                                                        4, // bLength
+                                                        DescriptorType::String as u8, // bDescriptorType
+                                                        0x09, 0x04 // en_US
+                                                    ]);
+                                                    // Update transmittable count.
+                                                    write_usb_sram_16(2, 4.min(setup.length.get()));
+                                                }
+                                                1 => {
+                                                    // The one bogus string
+                                                    write_usb_sram_bytes(64, &[
+                                                        16, // bLength
+                                                        DescriptorType::String as u8, // bDescriptorType
+                                                        0x59, 0x00,
+                                                        0x4f, 0x00,
+                                                        0x55, 0x00,
+                                                        0x52, 0x00,
+                                                        0x4d, 0x00,
+                                                        0x4f, 0x00,
+                                                        0x4d, 0x00,
+                                                    ]);
+                                                    // Update transmittable count.
+                                                    write_usb_sram_16(2, 16.min(setup.length.get()));
+                                                }
+                                                _ => {
+                                                    write_usb_sram_16(2, 0);
+                                                }
                                             }
                                         }
+                                        _ => {
+                                            // Huh?
+                                            write_usb_sram_16(2, 0);
+                                        }
                                     }
-                                    _ => {
-                                        // Huh?
-                                        write_usb_sram_16(2, 0);
-                                    }
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+                                            // Also reception to allow for status
+                                            // packet
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
+                                    });
                                 }
+                                (Dir::HostToDevice, Some(StdRequestCode::SetConfiguration)) => {
+                                    write_usb_sram_16(2, 0);
+                                    // Prepare empty report.
+                                    write_usb_sram_16(192, 0);
+                                    write_usb_sram_16(192 + 2, 0);
+                                    write_usb_sram_16(192 + 4, 0);
+                                    write_usb_sram_16(192 + 6, 0);
 
-                                // Enable transmission.
-                                p.USB.epr[ep].modify(|r, w| unsafe {
-                                    zero_toggles(w)
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                        // Also reception to allow for status
-                                        // packet
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                });
-                            }
-                            (Dir::HostToDevice, RequestTypeType::Class, Recipient::Interface, 0x0a) => {
-                                // HID set idle
-                                write_usb_sram_16(2, 0);
-                                p.USB.epr[ep].modify(|r, w| unsafe {
-                                    zero_toggles(w)
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                        // Also reception to allow for status
-                                        // packet
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                });
-                            }
-                            (Dir::DeviceToHost, RequestTypeType::Standard, Recipient::Interface, 0x06) => {
-                                // Interface GET_DESCRIPTOR
-                                match HidClassDescriptorType::from_u16(setup.value.get() >> 8) {
-                                    Some(HidClassDescriptorType::Report) => {
-                                        // HID Report Descriptor
-                                        let desc = [
-                                            0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
-                                            0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x03, 0x75, 0x01,
-                                            0x05, 0x08, 0x19, 0x01, 0x29, 0x03, 0x91, 0x02, 0x95, 0x05, 0x75, 0x01, 0x91, 0x01, 0x95, 0x06,
-                                            0x75, 0x08, 0x26, 0xff, 0x00, 0x05, 0x07, 0x19, 0x00, 0x29, 0x91, 0x81, 0x00, 0xc0,
-                                        ];
-                                        write_usb_sram_bytes(64, &desc);
-                                        // Update transmittable count.
-                                        write_usb_sram_16(2, setup.length.get().min(desc.len() as u16));
-                                    }
-                                    _ => {
-                                        // Unknown kind of descriptor.
-                                        write_usb_sram_16(2, 0);
-                                    }
+                                    // Set up EP1 for HID
+                                    p.USB.epr[1].modify(|r, w| {
+                                        w.ea().bits(1)
+                                            .ep_type().bits(0b11) // INTERRUPT
+                                            .ep_kind().clear_bit() // not used
+
+                                            // Note: these bits are toggled by writing 1 for some goddamn
+                                            // reason, so we set them as follows. I'd love to extract a utility
+                                            // function for this but svd2rust has ensured that this is
+                                            // impossible.
+                                            .dtog_tx().bit(r.dtog_tx().bit()) // clear bit by toggle
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+
+                                            .dtog_rx().bit(r.dtog_rx().bit()) // clear bit by toggle
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL (can't receive)
+                                    });
+                                    p.USB.epr[0].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+                                            // Also reception to allow for status
+                                            // packet
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
+                                    });
                                 }
-                                // Enable transmission.
-                                p.USB.epr[ep].modify(|r, w| unsafe {
-                                    zero_toggles(w)
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                        // Also reception to allow for status
-                                        // packet
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                });
+                                _ => {
+                                    // Unsupported
+                                    // Update transmittable count.
+                                    write_usb_sram_16(2, 0);
+                                    // Set a stall condition.
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
+                                    });
+                                }
+                            },
+                            (RequestTypeType::Standard, Recipient::Interface) => match (setup.request_type.data_phase_direction(), StdRequestCode::from_u8(setup.request)) {
+                                (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
+                                    match HidClassDescriptorType::from_u16(setup.value.get() >> 8) {
+                                        Some(HidClassDescriptorType::Report) => {
+                                            // HID Report Descriptor
+                                            let desc = [
+                                                0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
+                                                0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x03, 0x75, 0x01,
+                                                0x05, 0x08, 0x19, 0x01, 0x29, 0x03, 0x91, 0x02, 0x95, 0x05, 0x75, 0x01, 0x91, 0x01, 0x95, 0x06,
+                                                0x75, 0x08, 0x26, 0xff, 0x00, 0x05, 0x07, 0x19, 0x00, 0x29, 0x91, 0x81, 0x00, 0xc0,
+                                            ];
+                                            write_usb_sram_bytes(64, &desc);
+                                            // Update transmittable count.
+                                            write_usb_sram_16(2, setup.length.get().min(desc.len() as u16));
+                                        }
+                                        _ => {
+                                            // Unknown kind of descriptor.
+                                            write_usb_sram_16(2, 0);
+                                        }
+                                    }
+                                    // Enable transmission.
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+                                            // Also reception to allow for status
+                                            // packet
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
+                                    });
+                                }
+                                _ => {
+                                    // Unsupported
+                                    // Update transmittable count.
+                                    write_usb_sram_16(2, 0);
+                                    // Set a stall condition.
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
+                                    });
+                                }
                             }
-                            (Dir::HostToDevice, RequestTypeType::Class, Recipient::Interface, 0x09) => {
-                                // Interface SET_REPORT
-                                // whatever
-                                write_usb_sram_16(2, 0);
-                                p.USB.epr[ep].modify(|r, w| unsafe {
-                                    zero_toggles(w)
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                        // Also reception to allow for status
-                                        // packet
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                });
+                            (RequestTypeType::Class, Recipient::Interface) => match (setup.request_type.data_phase_direction(), HidRequestCode::from_u8(setup.request)) {
+                                (Dir::HostToDevice, Some(HidRequestCode::SetIdle)) => {
+                                    write_usb_sram_16(2, 0);
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+                                            // Also reception to allow for status
+                                            // packet
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
+                                    });
+                                }
+                                (Dir::HostToDevice, Some(HidRequestCode::SetReport)) => {
+                                    // whatever
+                                    write_usb_sram_16(2, 0);
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+                                            // Also reception to allow for status
+                                            // packet
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
+                                    });
+                                }
+                                _ => {
+                                    // Unsupported
+                                    // Update transmittable count.
+                                    write_usb_sram_16(2, 0);
+                                    // Set a stall condition.
+                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                        zero_toggles(w)
+                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
+                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
+                                    });
+                                }
                             }
                             _ => {
                                 // Unsupported
@@ -433,7 +462,7 @@ fn main() -> ! {
                                         .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
                                         .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
                                 });
-                            }
+                            },
                         }
                     }
                 } else {
@@ -744,5 +773,32 @@ enum HidClassDescriptorType {
     Hid = 0x21,
     Report = 0x22,
     Physical = 0x33,
+}
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[repr(u8)]
+enum StdRequestCode {
+    GetStatus = 0,
+    ClearFeature = 1,
+    SetFeature = 3,
+    SetAddress = 5,
+    GetDescriptor = 6,
+    SetDescriptor = 7,
+    GetConfiguration = 8,
+    SetConfiguration = 9,
+    GetInterface = 10,
+    SetInterface = 11,
+    SynchFrame = 12,
+}
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[repr(u8)]
+enum HidRequestCode {
+    GetReport = 1,
+    GetIdle = 2,
+    GetProtocol = 3,
+    SetReport = 9,
+    SetIdle = 0xA,
+    SetProtocol = 0xB,
 }
 
