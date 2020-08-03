@@ -11,6 +11,9 @@ use zerocopy::{U16, U32, FromBytes, AsBytes, Unaligned};
 use cortex_m_rt::entry;
 use stm32l4::stm32l4x2 as device;
 
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+
 #[entry]
 fn main() -> ! {
     let p = unsafe { device::Peripherals::steal() };
@@ -202,16 +205,11 @@ fn main() -> ! {
                         // Collect request from packet memory.
                         let rxbuf = get_ep_rx_offset(&p.USB, ep);
                         let setup = read_usb_sram::<SetupPacket>(rxbuf);
-                        let req_type = setup.request_type.0;
-                        let req = setup.request;
-                        let value = setup.value.get();
-                        let index = setup.index.get();
-                        let length = setup.length.get();
 
-                        match (req_type, req) {
-                            (0x00, 5) => {
+                        match (setup.request_type.data_phase_direction(), setup.request_type.type_(), setup.request_type.recipient(), setup.request) {
+                            (Dir::HostToDevice, RequestTypeType::Standard, Recipient::Device, 5) => {
                                 // SET_ADDRESS
-                                pending_address = Some(value as u8 & 0x7F);
+                                pending_address = Some(setup.value.get() as u8 & 0x7F);
                                 write_usb_sram_16(2, 0);
                                 p.USB.epr[ep].modify(|r, w| unsafe {
                                     zero_toggles(w)
@@ -222,7 +220,7 @@ fn main() -> ! {
                                 });
 
                             }
-                            (0x00, 9) => {
+                            (Dir::HostToDevice, RequestTypeType::Standard, Recipient::Device, 9) => {
                                 // SET_CONFIGURATION
                                 write_usb_sram_16(2, 0);
                                 // Prepare empty report.
@@ -256,14 +254,14 @@ fn main() -> ! {
                                 });
 
                             }
-                            (0x80, 6) => {
+                            (Dir::DeviceToHost, RequestTypeType::Standard, Recipient::Device, 6) => {
                                 // GET_DESCRIPTOR
-                                match value >> 8 {
-                                    0x01 => {
+                                match DescriptorType::from_u16(setup.value.get() >> 8) {
+                                    Some(DescriptorType::Device) => {
                                         // Device
                                         write_usb_sram_bytes(64, &[
                                             18, // bLength
-                                            1, // bDescriptorType
+                                            DescriptorType::Device as u8, // bDescriptorType
                                             0x00, 0x01, // bcdUSB
                                             0, // bDeviceClass
                                             0, // bDeviceSubClass
@@ -278,13 +276,13 @@ fn main() -> ! {
                                             1, // bNumConfigurations
                                         ]);
                                         // Update transmittable count.
-                                        write_usb_sram_16(2, 18.min(length));
+                                        write_usb_sram_16(2, 18.min(setup.length.get()));
                                     }
-                                    0x02 => {
+                                    Some(DescriptorType::Configuration) => {
                                         // Configuration
                                         let config = [
                                             9, // bLength
-                                            2, // bDescriptorType
+                                            DescriptorType::Configuration as u8, // bDescriptorType
                                             34, 0, // wTotalLength TODO
                                             1, // bNumInterfaces
                                             1, // bConfigurationValue
@@ -294,7 +292,7 @@ fn main() -> ! {
 
                                             // interface
                                             9, // bLength
-                                            4, // bDescriptorType
+                                            DescriptorType::Interface as u8, // bDescriptorType
                                             0, // bInterfaceNumber
                                             0, // bAlternateSetting
                                             1, // bNumEndpoints
@@ -305,7 +303,7 @@ fn main() -> ! {
 
                                             // HID
                                             9, // bLength
-                                            0x21, // bDescriptorType
+                                            HidClassDescriptorType::Hid as u8, // bDescriptorType
                                             0x01, 0x01, // bcdHID
                                             0x00, // bCountryCode
                                             1, // bNumDescriptors
@@ -314,7 +312,7 @@ fn main() -> ! {
 
                                             // endpoint
                                             7, // bLength
-                                            5, // bDescriptorType
+                                            DescriptorType::Endpoint as u8, // bDescriptorType
                                             0x81, // bEndpointAddress
                                             3, // bmAttributes (INTERRUPT)
                                             8, 0, // wMaxPacketSize
@@ -322,26 +320,26 @@ fn main() -> ! {
                                             ];
                                         write_usb_sram_bytes(64, &config);
                                         // Update transmittable count.
-                                        write_usb_sram_16(2, length.min(config.len() as u16));
+                                        write_usb_sram_16(2, setup.length.get().min(config.len() as u16));
                                     }
-                                    0x03 => {
+                                    Some(DescriptorType::String) => {
                                         // String
-                                        match value & 0xFF {
+                                        match setup.value.get() & 0xFF {
                                             0 => {
                                                 // LangID set
                                                 write_usb_sram_bytes(64, &[
                                                     4, // bLength
-                                                    3, // bDescriptorType
+                                                    DescriptorType::String as u8, // bDescriptorType
                                                     0x09, 0x04 // en_US
                                                 ]);
                                                 // Update transmittable count.
-                                                write_usb_sram_16(2, 4.min(length));
+                                                write_usb_sram_16(2, 4.min(setup.length.get()));
                                             }
                                             1 => {
                                                 // The one bogus string
                                                 write_usb_sram_bytes(64, &[
                                                     16, // bLength
-                                                    3, // bDescriptorType
+                                                    DescriptorType::String as u8, // bDescriptorType
                                                     0x59, 0x00,
                                                     0x4f, 0x00,
                                                     0x55, 0x00,
@@ -351,7 +349,7 @@ fn main() -> ! {
                                                     0x4d, 0x00,
                                                 ]);
                                                 // Update transmittable count.
-                                                write_usb_sram_16(2, 16.min(length));
+                                                write_usb_sram_16(2, 16.min(setup.length.get()));
                                             }
                                             _ => {
                                                 write_usb_sram_16(2, 0);
@@ -373,7 +371,7 @@ fn main() -> ! {
                                         .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
                                 });
                             }
-                            (0x21, 0x0a) => {
+                            (Dir::HostToDevice, RequestTypeType::Class, Recipient::Interface, 0x0a) => {
                                 // HID set idle
                                 write_usb_sram_16(2, 0);
                                 p.USB.epr[ep].modify(|r, w| unsafe {
@@ -384,10 +382,10 @@ fn main() -> ! {
                                         .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
                                 });
                             }
-                            (0x81, 0x06) => {
+                            (Dir::DeviceToHost, RequestTypeType::Standard, Recipient::Interface, 0x06) => {
                                 // Interface GET_DESCRIPTOR
-                                match value >> 8 {
-                                    0x22 => {
+                                match HidClassDescriptorType::from_u16(setup.value.get() >> 8) {
+                                    Some(HidClassDescriptorType::Report) => {
                                         // HID Report Descriptor
                                         let desc = [
                                             0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
@@ -397,7 +395,7 @@ fn main() -> ! {
                                         ];
                                         write_usb_sram_bytes(64, &desc);
                                         // Update transmittable count.
-                                        write_usb_sram_16(2, length.min(desc.len() as u16));
+                                        write_usb_sram_16(2, setup.length.get().min(desc.len() as u16));
                                     }
                                     _ => {
                                         // Unknown kind of descriptor.
@@ -413,7 +411,7 @@ fn main() -> ! {
                                         .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
                                 });
                             }
-                            (0x21, 0x09) => {
+                            (Dir::HostToDevice, RequestTypeType::Class, Recipient::Interface, 0x09) => {
                                 // Interface SET_REPORT
                                 // whatever
                                 write_usb_sram_16(2, 0);
@@ -729,3 +727,22 @@ fn get_ep_rx_offset(usb: &device::USB, ep: usize) -> u16 {
     let table = usb.btable.read().bits() as u16;
     read_usb_sram_16(table + ep as u16 * 8 + 4)
 }
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[repr(u8)]
+enum DescriptorType {
+    Device = 1,
+    Configuration = 2,
+    String = 3,
+    Interface = 4,
+    Endpoint = 5,
+}
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[repr(u8)]
+enum HidClassDescriptorType {
+    Hid = 0x21,
+    Report = 0x22,
+    Physical = 0x33,
+}
+
