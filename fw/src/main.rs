@@ -220,118 +220,29 @@ fn main() -> ! {
                                     });
                                 }
                                 (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
-                                    match DescriptorType::from_u16(setup.value.get() >> 8) {
-                                        Some(DescriptorType::Device) => {
-                                            // Device
-                                            write_usb_sram_bytes(64, &[
-                                                18, // bLength
-                                                DescriptorType::Device as u8, // bDescriptorType
-                                                0x00, 0x01, // bcdUSB
-                                                0, // bDeviceClass
-                                                0, // bDeviceSubClass
-                                                0, // bDeviceProtocol
-                                                64, // bMaxPacketSize0
-                                                0xad, 0xde, // idVendor
-                                                0xef, 0xbe, // idProduct
-                                                0x14, 0x03, // bcdDevice
-                                                1, // iManufacturer
-                                                1, // iProduct
-                                                1, // iSerialNumber
-                                                1, // bNumConfigurations
-                                            ]);
-                                            // Update transmittable count.
-                                            write_usb_sram_16(2, 18.min(setup.length.get()));
+                                    match device_get_descriptor(&setup) {
+                                        Ok(_) => {
+                                            p.USB.epr[ep].modify(|r, w| {
+                                                zero_toggles(w)
+                                                    .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+                                                    // Also reception to allow for status
+                                                    // packet
+                                                    .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
+                                            });
                                         }
-                                        Some(DescriptorType::Configuration) => {
-                                            // Configuration
-                                            let config = [
-                                                9, // bLength
-                                                DescriptorType::Configuration as u8, // bDescriptorType
-                                                34, 0, // wTotalLength TODO
-                                                1, // bNumInterfaces
-                                                1, // bConfigurationValue
-                                                1, // iConfiguration (string descriptor)
-                                                0x80, // bmAttributes
-                                                50, // bMaxPower =100mA
-
-                                                // interface
-                                                9, // bLength
-                                                DescriptorType::Interface as u8, // bDescriptorType
-                                                0, // bInterfaceNumber
-                                                0, // bAlternateSetting
-                                                1, // bNumEndpoints
-                                                3, // bInterfaceClass
-                                                1, // bInterfaceSubClass
-                                                1, // bInterfaceProtocol
-                                                1, // iInterface (string descriptor)
-
-                                                // HID
-                                                9, // bLength
-                                                HidClassDescriptorType::Hid as u8, // bDescriptorType
-                                                0x01, 0x01, // bcdHID
-                                                0x00, // bCountryCode
-                                                1, // bNumDescriptors
-                                                0x22, // bDescriptorType (REPORT)
-                                                62, 0, // wItemLength
-
-                                                // endpoint
-                                                7, // bLength
-                                                DescriptorType::Endpoint as u8, // bDescriptorType
-                                                0x81, // bEndpointAddress
-                                                3, // bmAttributes (INTERRUPT)
-                                                8, 0, // wMaxPacketSize
-                                                1, // bInterval
-                                                ];
-                                            write_usb_sram_bytes(64, &config);
-                                            // Update transmittable count.
-                                            write_usb_sram_16(2, setup.length.get().min(config.len() as u16));
-                                        }
-                                        Some(DescriptorType::String) => {
-                                            // String
-                                            match setup.value.get() & 0xFF {
-                                                0 => {
-                                                    // LangID set
-                                                    write_usb_sram_bytes(64, &[
-                                                        4, // bLength
-                                                        DescriptorType::String as u8, // bDescriptorType
-                                                        0x09, 0x04 // en_US
-                                                    ]);
-                                                    // Update transmittable count.
-                                                    write_usb_sram_16(2, 4.min(setup.length.get()));
-                                                }
-                                                1 => {
-                                                    // The one bogus string
-                                                    write_usb_sram_bytes(64, &[
-                                                        16, // bLength
-                                                        DescriptorType::String as u8, // bDescriptorType
-                                                        0x59, 0x00,
-                                                        0x4f, 0x00,
-                                                        0x55, 0x00,
-                                                        0x52, 0x00,
-                                                        0x4d, 0x00,
-                                                        0x4f, 0x00,
-                                                        0x4d, 0x00,
-                                                    ]);
-                                                    // Update transmittable count.
-                                                    write_usb_sram_16(2, 16.min(setup.length.get()));
-                                                }
-                                                _ => {
-                                                    write_usb_sram_16(2, 0);
-                                                }
-                                            }
-                                        }
-                                        _ => {
-                                            // Huh?
+                                        Err(_) => {
+                                            // Do not transmit any data.
                                             write_usb_sram_16(2, 0);
+                                            // In fact, stall.
+                                            p.USB.epr[ep].modify(|r, w| {
+                                                zero_toggles(w)
+                                                    .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
+                                                    // Also reception to allow for status
+                                                    // packet
+                                                    .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
+                                            });
                                         }
                                     }
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                            // Also reception to allow for status
-                                            // packet
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                    });
                                 }
                                 (Dir::HostToDevice, Some(StdRequestCode::SetConfiguration)) => {
                                     write_usb_sram_16(2, 0);
@@ -802,3 +713,104 @@ enum HidRequestCode {
     SetProtocol = 0xB,
 }
 
+fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
+    let dtype = DescriptorType::from_u16(setup.value.get() >> 8);
+    let idx = setup.value.get() as u8;
+
+    let bytes: &[u8] = match (dtype, idx) {
+        (Some(DescriptorType::Device), 0) => &[
+            18, // bLength
+            DescriptorType::Device as u8, // bDescriptorType
+            0x00, 0x01, // bcdUSB
+            0, // bDeviceClass
+            0, // bDeviceSubClass
+            0, // bDeviceProtocol
+            64, // bMaxPacketSize0
+            0xad, 0xde, // idVendor
+            0xef, 0xbe, // idProduct
+            0x14, 0x03, // bcdDevice
+            1, // iManufacturer
+            1, // iProduct
+            1, // iSerialNumber
+            1, // bNumConfigurations
+        ],
+        (Some(DescriptorType::Configuration), 0) => &[
+            9, // bLength
+            DescriptorType::Configuration as u8, // bDescriptorType
+            34, 0, // wTotalLength TODO
+            1, // bNumInterfaces
+            1, // bConfigurationValue
+            1, // iConfiguration (string descriptor)
+            0x80, // bmAttributes
+            50, // bMaxPower =100mA
+
+            // interface
+            9, // bLength
+            DescriptorType::Interface as u8, // bDescriptorType
+            0, // bInterfaceNumber
+            0, // bAlternateSetting
+            1, // bNumEndpoints
+            3, // bInterfaceClass
+            1, // bInterfaceSubClass
+            1, // bInterfaceProtocol
+            1, // iInterface (string descriptor)
+
+            // HID
+            9, // bLength
+            HidClassDescriptorType::Hid as u8, // bDescriptorType
+            0x01, 0x01, // bcdHID
+            0x00, // bCountryCode
+            1, // bNumDescriptors
+            0x22, // bDescriptorType (REPORT)
+            62, 0, // wItemLength
+
+            // endpoint
+            7, // bLength
+            DescriptorType::Endpoint as u8, // bDescriptorType
+            0x81, // bEndpointAddress
+            3, // bmAttributes (INTERRUPT)
+            8, 0, // wMaxPacketSize
+            1, // bInterval
+        ],
+        (Some(DescriptorType::String), _) => {
+            // String
+            match idx {
+                0 => {
+                    // LangID set
+                    &[
+                        4, // bLength
+                        DescriptorType::String as u8, // bDescriptorType
+                        0x09, 0x04 // en_US
+                    ]
+                }
+                1 => {
+                    // The one bogus string
+                    &[
+                        16, // bLength
+                        DescriptorType::String as u8, // bDescriptorType
+                        0x59, 0x00,
+                        0x4f, 0x00,
+                        0x55, 0x00,
+                        0x52, 0x00,
+                        0x4d, 0x00,
+                        0x4f, 0x00,
+                        0x4d, 0x00,
+                    ]
+                }
+                _ => {
+                    return Err(());
+                }
+            }
+        }
+        _ => {
+            // Huh?
+            return Err(());
+        }
+    };
+
+    write_usb_sram_bytes(64, bytes);
+    // Update transmittable count.
+    write_usb_sram_16(2, setup.length.get().min(bytes.len() as u16));
+
+    Ok(())
+}
