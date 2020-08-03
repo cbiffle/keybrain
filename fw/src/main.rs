@@ -6,6 +6,8 @@ extern crate stm32l4;
 
 use core::convert::TryInto;
 
+use byteorder::LittleEndian;
+use zerocopy::{U16, U32, FromBytes, AsBytes, Unaligned};
 use cortex_m_rt::entry;
 use stm32l4::stm32l4x2 as device;
 
@@ -199,11 +201,12 @@ fn main() -> ! {
 
                         // Collect request from packet memory.
                         let rxbuf = get_ep_rx_offset(&p.USB, ep);
-                        let req_type = read_usb_sram_8(rxbuf + 0);
-                        let req = read_usb_sram_8(rxbuf + 1);
-                        let value = read_usb_sram_16(rxbuf + 2);
-                        let index = read_usb_sram_16(rxbuf + 4);
-                        let length = read_usb_sram_16(rxbuf + 6);
+                        let setup = read_usb_sram::<SetupPacket>(rxbuf);
+                        let req_type = setup.request_type.0;
+                        let req = setup.request;
+                        let value = setup.value.get();
+                        let index = setup.index.get();
+                        let length = setup.length.get();
 
                         match (req_type, req) {
                             (0x00, 5) => {
@@ -611,6 +614,106 @@ fn write_usb_sram_bytes(addr: u16, data: &[u8]) {
             }
         }
     }
+}
+
+fn read_usb_sram<T: Sized>(addr: u16) -> T
+where T: FromBytes
+{
+    assert!(addr < 0x400);
+    assert!(addr + (core::mem::size_of::<T>() as u16) <= 0x400);
+    use core::mem::MaybeUninit;
+
+    let mut buffer: MaybeUninit<T> = MaybeUninit::uninit();
+    let buffer_bytes = buffer.as_mut_ptr() as *mut u8;
+    let src_addr = (USB_SRAM_BASE + usize::from(addr)) as *const u8;
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(src_addr, buffer_bytes, core::mem::size_of::<T>());
+        buffer.assume_init()
+    }
+}
+
+/*
+fn write_usb_sram<T: Sized>(addr: u16, value: T)
+where T: AsBytes
+{
+    assert!(addr < 0x400);
+    assert!(addr + (core::mem::size_of::<T>() as u16) <= 0x400);
+
+    let src_slice = value.as_bytes();
+
+    let dst_addr = (USB_SRAM_BASE + usize::from(addr)) as *mut u8;
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(src_slice.as_ptr(), dst_addr, src_slice.len());
+    }
+}
+*/
+
+#[derive(Clone, Debug, Default, FromBytes, AsBytes, Unaligned)]
+#[repr(C)]
+struct SetupPacket {
+    pub request_type: RequestType,
+    pub request: u8,
+    pub value: U16<LittleEndian>,
+    pub index: U16<LittleEndian>,
+    pub length: U16<LittleEndian>,
+}
+
+#[derive(Copy, Clone, Debug, Default, FromBytes, AsBytes, Unaligned)]
+#[repr(transparent)]
+struct RequestType(u8);
+
+impl RequestType {
+    pub fn data_phase_direction(self) -> Dir {
+        if self.0 & 0x80 == 0 {
+            Dir::HostToDevice
+        } else {
+            Dir::DeviceToHost
+        }
+    }
+
+    pub fn type_(self) -> RequestTypeType {
+        match (self.0 >> 5) & 0b11 {
+            0 => RequestTypeType::Standard,
+            1 => RequestTypeType::Class,
+            2 => RequestTypeType::Vendor,
+            _ => RequestTypeType::Reserved,
+        }
+    }
+
+    pub fn recipient(self) -> Recipient {
+        match self.0 & 0x1F {
+            0 => Recipient::Device,
+            1 => Recipient::Interface,
+            2 => Recipient::Endpoint,
+            3 => Recipient::Other,
+            x => Recipient::Reserved(x),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum Dir {
+    HostToDevice,
+    DeviceToHost,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum RequestTypeType {
+    Standard = 0,
+    Class = 1,
+    Vendor = 2,
+    Reserved = 3,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum Recipient {
+    Device,
+    Interface,
+    Endpoint,
+    Other,
+    Reserved(u8),
 }
 
 fn get_ep_tx_offset(usb: &device::USB, ep: u8) -> u16 {
