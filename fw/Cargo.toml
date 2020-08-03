@@ -1,0 +1,24 @@
+[package]
+name = "fourk"
+version = "0.1.0"
+authors = ["Cliff L. Biffle <code@cliffle.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+panic-semihosting = "0.5.3"
+cortex-m = "0.6.2"
+cortex-m-rt = "0.6.12"
+stm32l4 = {version = "0.11", features = ["stm32l4x2", "rt"]}
+zerocopy = "0.3"
+
+[[bin]]
+name = "fourk"
+test = false
+bench = false
+
+[profile.release]
+opt-level = 3
+lto = true
+debug = 2

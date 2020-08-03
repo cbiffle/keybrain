@@ -1,0 +1,39 @@
+# USB notes
+
+
+## Boot protocol
+
+HID is ridiculously ornate, and defines a subset for BIOSes and such. This
+subset appears to be all that most of my keyboards implement.
+
+The host receives keyboard updates using 8-byte Interrupt IN operations. These
+consist of:
+
+- A byte bitmask for the modifier keys.
+- A reserved byte.
+- Six bytes of keycodes.
+
+At any given time the packet contains the codes for six non-modifier keys that
+are currently depressed, plus the state of all modifier keys (up to 8 anyway).
+The host has to diff this against the previous state if it wants press/release
+events.
+
+The keyboard in this case does _not_ do any kind of key repeat. Keys are down or
+up.
+
+In the initial state, the keyboard will report its state whenever the host asks.
+The host can use `SET_IDLE` to change this. `SET_IDLE` asks the device to NAK
+polls until something changes or a deadline expires. The deadline part of this
+seems to have been designed to implement "keymatic repeat?" 
+
+Anyhoo, the deadline is specified in units of 4ms, which is fine since the host
+is giving us a 1ms heartbeat.
+
+- Slots in the boot packet that are not used are zeroed.
+- Key codes are filled in from left to right.
+- If keys are released, the others shift left to fill the space.
+- If too many keys are pressed, the keyboard is expected to fill all slots with
+  a "roll over" code 0x01. When the condition clears it goes back to reporting
+  the depressed keys. Modifiers are still reported during rollover condition.
+
+
