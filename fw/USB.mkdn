@@ -1,5 +1,13 @@
 # USB notes
 
+## Control EP0
+
+Control endpoint 0 is used as a multiplexed channel for SETUP operations. A
+field in the SETUP packet selects between messages to the device (e.g.
+`SET_ADDRESS`), a numbered interface (e.g. HID `GET_DESCRIPTOR`), or a numbered
+endpoint.
+
+
 
 ## Boot protocol
 
@@ -35,5 +43,30 @@ is giving us a 1ms heartbeat.
 - If too many keys are pressed, the keyboard is expected to fill all slots with
   a "roll over" code 0x01. When the condition clears it goes back to reporting
   the depressed keys. Modifiers are still reported during rollover condition.
+
+
+---
+
+States. Figure 9-1 in the USB 2 standard has a nice diagram. I'll use their
+terms.
+
+Powered.
+- Waiting for a USB reset.
+
+Reset.
+- Responds only on control pipe 0
+- Responds only to limited command set.
+- Can accept `SET_ADDRESS` and apply it at status packet completion.
+
+Address.
+- Responds to broader command set, but still only on control pipe 0.
+- Can share config descriptors.
+- Will accept `SET_CONFIGURATION`
+
+Configured.
+- Now complies with one of its interface descriptions, probably the sole one.
+- Other endpoints are live now
+- Further HID-level configuration can occur.
+
 
 
