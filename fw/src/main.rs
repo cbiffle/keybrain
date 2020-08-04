@@ -221,8 +221,15 @@ fn main() -> ! {
                                     });
                                 }
                                 (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
-                                    match device_get_descriptor(&setup) {
-                                        Ok(_) => {
+                                    let temp_buffer = unsafe {
+                                        core::slice::from_raw_parts_mut(
+                                            (USB_SRAM_BASE + 64) as *mut u16,
+                                            64 / 2,
+                                        )
+                                    };
+                                    match device_get_descriptor(&setup, temp_buffer) {
+                                        Ok(len) => {
+                                            write_usb_sram_16(2, setup.length.get().min(len as u16));
                                             p.USB.epr[ep].modify(|r, w| {
                                                 zero_toggles(w)
                                                     .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
@@ -561,6 +568,41 @@ fn write_usb_sram_bytes(mut addr: u16, mut data: &[u8]) {
     }
 }
 
+fn write_high_8(dest: &mut u16, data: u8) {
+    *dest = (*dest & 0xFF) | u16::from(data) << 8
+}
+
+fn write_low_8(dest: &mut u16, data: u8) {
+    *dest = (*dest & 0xFF00) | u16::from(data)
+}
+
+/// Writes bytes from `src` into `dest` using `u16` accesses.
+///
+/// Most bytes will be packed into `u16`s and stored directly; the final byte,
+/// if the length is odd, will be stored with a read-modify-write operation.
+///
+/// `dest` must be at least as large as `src` measured in bytes; otherwise this
+/// panics. On return, the first `src.len()` bytes of `dest` are initialized.
+#[inline(never)]
+fn write_bytes(dest: &mut [u16], src: &[u8]) {
+    assert!(dest.len() >= (src.len() + 1) / 2);
+    for (d, schunk) in dest.iter_mut().zip(src.chunks_exact(2)) {
+        *d = u16::from_le_bytes(schunk.try_into().unwrap());
+    }
+    if src.len() & 1 != 0 {
+        // Handle trailing odd byte
+        write_low_8(&mut dest[src.len() / 2], src[src.len() - 1])
+    }
+}
+
+/// Stores `value` into the prefix of `dest` and returns the valid length *in
+/// bytes*.
+fn write_t(dest: &mut [u16], value: &impl AsBytes) -> usize {
+    let bytes = value.as_bytes();
+    write_bytes(dest, bytes);
+    bytes.len()
+}
+
 fn read_usb_sram<T: Sized>(addr: u16) -> T
 where T: FromBytes
 {
@@ -806,18 +848,25 @@ struct CompoundConfig {
     ep: EndpointDescriptor,
 }
 
-fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
+fn device_get_descriptor(
+    setup: &SetupPacket,
+    buffer: &mut [u16],
+) -> Result<usize, ()> {
     let dtype = DescriptorType::from_u16(setup.value.get() >> 8);
+    let dtype = if let Some(d) = dtype {
+        d
+    } else {
+        panic!("wtf: {:?}", setup);
+    };
     let idx = setup.value.get() as u8;
 
-    let write = |bytes| {
-        write_usb_sram_bytes(64, bytes);
-        // Update transmittable count.
-        write_usb_sram_16(2, setup.length.get().min(bytes.len() as u16));
+    let mut write = |bytes| {
+        write_bytes(buffer, bytes);
+        Ok(bytes.len())
     };
 
     match (dtype, idx) {
-        (Some(DescriptorType::Device), 0) => write(DeviceDescriptor {
+        (DescriptorType::Device, 0) => write(DeviceDescriptor {
             usb_version: U16::new(0x01_01),
             max_packet_size0: 64,
             vendor: U16::new(0xdead),
@@ -829,7 +878,7 @@ fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
             num_configurations: 1,
             ..DeviceDescriptor::default()
         }.as_bytes()),
-        (Some(DescriptorType::Configuration), 0) => {
+        (DescriptorType::Configuration, 0) => {
             let desc = CompoundConfig {
                 config: ConfigDescriptor {
                     total_length: U16::new(core::mem::size_of::<CompoundConfig>() as u16),
@@ -867,7 +916,7 @@ fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
             };
             write(desc.as_bytes())
         },
-        (Some(DescriptorType::String), _) => {
+        (DescriptorType::String, _) => {
             // String
             match idx {
                 0 => {
@@ -901,7 +950,5 @@ fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
             // Huh?
             return Err(());
         }
-    };
-
-    Ok(())
+    }
 }
