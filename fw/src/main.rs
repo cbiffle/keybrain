@@ -13,6 +13,7 @@ use stm32l4::stm32l4x2 as device;
 
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
+use smart_default::SmartDefault;
 
 #[entry]
 fn main() -> ! {
@@ -531,9 +532,15 @@ fn write_usb_sram_8(addr: u16, data: u8) {
     write_usb_sram_16(addr & !1, word);
 }
 
-fn write_usb_sram_bytes(addr: u16, data: &[u8]) {
+fn write_usb_sram_bytes(mut addr: u16, mut data: &[u8]) {
     assert!(addr < 0x400);
     assert!(addr as usize + data.len() <= 0x400);
+
+    if addr & 1 != 0 && !data.is_empty() {
+        write_usb_sram_8(addr, data[0]);
+        addr += 1;
+        data = &data[1..];
+    }
 
     for (i, d) in data.chunks(2).enumerate() {
         if d.len() == 2 {
@@ -571,26 +578,18 @@ where T: FromBytes
     }
 }
 
-/*
 fn write_usb_sram<T: Sized>(addr: u16, value: T)
 where T: AsBytes
 {
     assert!(addr < 0x400);
     assert!(addr + (core::mem::size_of::<T>() as u16) <= 0x400);
 
-    let src_slice = value.as_bytes();
-
-    let dst_addr = (USB_SRAM_BASE + usize::from(addr)) as *mut u8;
-
-    unsafe {
-        core::ptr::copy_nonoverlapping(src_slice.as_ptr(), dst_addr, src_slice.len());
-    }
+    write_usb_sram_bytes(addr, value.as_bytes());
 }
-*/
 
 #[derive(Clone, Debug, Default, FromBytes, AsBytes, Unaligned)]
 #[repr(C)]
-struct SetupPacket {
+pub struct SetupPacket {
     pub request_type: RequestType,
     pub request: u8,
     pub value: U16<LittleEndian>,
@@ -600,7 +599,7 @@ struct SetupPacket {
 
 #[derive(Copy, Clone, Debug, Default, FromBytes, AsBytes, Unaligned)]
 #[repr(transparent)]
-struct RequestType(u8);
+pub struct RequestType(u8);
 
 impl RequestType {
     pub fn data_phase_direction(self) -> Dir {
@@ -632,13 +631,13 @@ impl RequestType {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum Dir {
+pub enum Dir {
     HostToDevice,
     DeviceToHost,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum RequestTypeType {
+pub enum RequestTypeType {
     Standard = 0,
     Class = 1,
     Vendor = 2,
@@ -646,7 +645,7 @@ enum RequestTypeType {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum Recipient {
+pub enum Recipient {
     Device,
     Interface,
     Endpoint,
@@ -668,7 +667,7 @@ fn get_ep_rx_offset(usb: &device::USB, ep: usize) -> u16 {
     read_usb_sram_16(table + ep as u16 * 8 + 4)
 }
 
-#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[derive(Copy, Clone, Debug, FromPrimitive, AsBytes, Unaligned)]
 #[repr(u8)]
 enum DescriptorType {
     Device = 1,
@@ -678,7 +677,7 @@ enum DescriptorType {
     Endpoint = 5,
 }
 
-#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[derive(Copy, Clone, Debug, FromPrimitive, AsBytes, Unaligned)]
 #[repr(u8)]
 enum HidClassDescriptorType {
     Hid = 0x21,
@@ -713,79 +712,171 @@ enum HidRequestCode {
     SetProtocol = 0xB,
 }
 
+#[derive(Clone, Debug, AsBytes, Unaligned, SmartDefault)]
+#[repr(C)]
+struct DeviceDescriptor {
+    #[default = 18]
+    length: u8,
+    #[default(DescriptorType::Device)]
+    type_: DescriptorType,
+    #[default(U16::new(0x0101))]
+    usb_version: U16<LittleEndian>,
+    device_class: u8,
+    device_subclass: u8,
+    device_protocol: u8,
+    max_packet_size0: u8,
+    vendor: U16<LittleEndian>,
+    product: U16<LittleEndian>,
+    device_version: U16<LittleEndian>,
+    manufacturer_string: u8,
+    product_string: u8,
+    serial_string: u8,
+    num_configurations: u8,
+}
+
+#[derive(Clone, Debug, AsBytes, Unaligned, SmartDefault)]
+#[repr(C)]
+struct ConfigDescriptor {
+    #[default = 9]
+    length: u8,
+    #[default(DescriptorType::Configuration)]
+    type_: DescriptorType,
+    total_length: U16<LittleEndian>,
+    num_interfaces: u8,
+    configuration_value: u8,
+    configuration_string: u8,
+    attributes: u8,
+    max_power: u8,
+}
+
+#[derive(Clone, Debug, AsBytes, Unaligned, SmartDefault)]
+#[repr(C)]
+struct InterfaceDescriptor {
+    #[default = 9]
+    length: u8,
+    #[default(DescriptorType::Interface)]
+    type_: DescriptorType,
+    interface_number: u8,
+    alternate_setting: u8,
+    num_endpoints: u8,
+    interface_class: u8,
+    interface_subclass: u8,
+    interface_protocol: u8,
+    interface_string: u8,
+}
+
+#[derive(Clone, Debug, AsBytes, Unaligned, SmartDefault)]
+#[repr(C)]
+struct HidDescriptor {
+    #[default = 9]
+    length: u8,
+    #[default(HidClassDescriptorType::Hid)]
+    type_: HidClassDescriptorType,
+    hid_version: U16<LittleEndian>,
+    country_code: u8,
+    #[default = 1]
+    num_descriptors: u8,
+    descriptor_type: u8,
+    descriptor_length: U16<LittleEndian>,
+}
+
+#[derive(Clone, Debug, AsBytes, Unaligned, SmartDefault)]
+#[repr(C)]
+struct EndpointDescriptor {
+    #[default = 7]
+    length: u8,
+    #[default(DescriptorType::Endpoint)]
+    type_: DescriptorType,
+    endpoint_address: u8,
+    attributes: u8,
+    max_packet_size: U16<LittleEndian>,
+    interval: u8,
+}
+
+#[derive(Clone, Debug, AsBytes, Unaligned, SmartDefault)]
+#[repr(C)]
+struct CompoundConfig {
+    config: ConfigDescriptor,
+    iface: InterfaceDescriptor,
+    hid: HidDescriptor,
+    ep: EndpointDescriptor,
+}
+
 fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
     let dtype = DescriptorType::from_u16(setup.value.get() >> 8);
     let idx = setup.value.get() as u8;
 
-    let bytes: &[u8] = match (dtype, idx) {
-        (Some(DescriptorType::Device), 0) => &[
-            18, // bLength
-            DescriptorType::Device as u8, // bDescriptorType
-            0x00, 0x01, // bcdUSB
-            0, // bDeviceClass
-            0, // bDeviceSubClass
-            0, // bDeviceProtocol
-            64, // bMaxPacketSize0
-            0xad, 0xde, // idVendor
-            0xef, 0xbe, // idProduct
-            0x14, 0x03, // bcdDevice
-            1, // iManufacturer
-            1, // iProduct
-            1, // iSerialNumber
-            1, // bNumConfigurations
-        ],
-        (Some(DescriptorType::Configuration), 0) => &[
-            9, // bLength
-            DescriptorType::Configuration as u8, // bDescriptorType
-            34, 0, // wTotalLength TODO
-            1, // bNumInterfaces
-            1, // bConfigurationValue
-            1, // iConfiguration (string descriptor)
-            0x80, // bmAttributes
-            50, // bMaxPower =100mA
+    let write = |bytes| {
+        write_usb_sram_bytes(64, bytes);
+        // Update transmittable count.
+        write_usb_sram_16(2, setup.length.get().min(bytes.len() as u16));
+    };
 
-            // interface
-            9, // bLength
-            DescriptorType::Interface as u8, // bDescriptorType
-            0, // bInterfaceNumber
-            0, // bAlternateSetting
-            1, // bNumEndpoints
-            3, // bInterfaceClass
-            1, // bInterfaceSubClass
-            1, // bInterfaceProtocol
-            1, // iInterface (string descriptor)
-
-            // HID
-            9, // bLength
-            HidClassDescriptorType::Hid as u8, // bDescriptorType
-            0x01, 0x01, // bcdHID
-            0x00, // bCountryCode
-            1, // bNumDescriptors
-            0x22, // bDescriptorType (REPORT)
-            62, 0, // wItemLength
-
-            // endpoint
-            7, // bLength
-            DescriptorType::Endpoint as u8, // bDescriptorType
-            0x81, // bEndpointAddress
-            3, // bmAttributes (INTERRUPT)
-            8, 0, // wMaxPacketSize
-            1, // bInterval
-        ],
+    match (dtype, idx) {
+        (Some(DescriptorType::Device), 0) => write(DeviceDescriptor {
+            usb_version: U16::new(0x01_01),
+            max_packet_size0: 64,
+            vendor: U16::new(0xdead),
+            product: U16::new(0xbeef),
+            device_version: U16::new(0x03_14),
+            manufacturer_string: 1,
+            product_string: 1,
+            serial_string: 1,
+            num_configurations: 1,
+            ..DeviceDescriptor::default()
+        }.as_bytes()),
+        (Some(DescriptorType::Configuration), 0) => {
+            let desc = CompoundConfig {
+                config: ConfigDescriptor {
+                    total_length: U16::new(core::mem::size_of::<CompoundConfig>() as u16),
+                    num_interfaces: 1,
+                    configuration_value: 1,
+                    configuration_string: 1,
+                    attributes: 0x80,
+                    max_power: 50,
+                    ..ConfigDescriptor::default()
+                },
+                iface: InterfaceDescriptor {
+                    interface_number: 0,
+                    alternate_setting: 0,
+                    num_endpoints: 1,
+                    interface_class: 3,
+                    interface_subclass: 1,
+                    interface_protocol: 1,
+                    interface_string: 1,
+                    ..InterfaceDescriptor::default()
+                },
+                hid: HidDescriptor {
+                    hid_version: U16::new(0x0101),
+                    country_code: 0,
+                    descriptor_type: 0x22,
+                    descriptor_length: U16::new(62),
+                    ..HidDescriptor::default()
+                },
+                ep: EndpointDescriptor {
+                    endpoint_address: 0x81,
+                    attributes: 3,
+                    max_packet_size: U16::new(8),
+                    interval: 1,
+                    ..EndpointDescriptor::default()
+                },
+            };
+            write(desc.as_bytes())
+        },
         (Some(DescriptorType::String), _) => {
             // String
             match idx {
                 0 => {
                     // LangID set
-                    &[
+                    write(&[
                         4, // bLength
                         DescriptorType::String as u8, // bDescriptorType
                         0x09, 0x04 // en_US
-                    ]
+                    ])
                 }
                 1 => {
                     // The one bogus string
-                    &[
+                    write(&[
                         16, // bLength
                         DescriptorType::String as u8, // bDescriptorType
                         0x59, 0x00,
@@ -795,7 +886,7 @@ fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
                         0x4d, 0x00,
                         0x4f, 0x00,
                         0x4d, 0x00,
-                    ]
+                    ])
                 }
                 _ => {
                     return Err(());
@@ -807,10 +898,6 @@ fn device_get_descriptor(setup: &SetupPacket) -> Result<(), ()> {
             return Err(());
         }
     };
-
-    write_usb_sram_bytes(64, bytes);
-    // Update transmittable count.
-    write_usb_sram_16(2, setup.length.get().min(bytes.len() as u16));
 
     Ok(())
 }
