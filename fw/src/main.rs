@@ -572,8 +572,12 @@ where T: FromBytes
     let buffer_bytes = buffer.as_mut_ptr() as *mut u8;
     let src_addr = (USB_SRAM_BASE + usize::from(addr)) as *const u8;
 
+    for i in 0..core::mem::size_of::<T>() {
+        unsafe {
+            buffer_bytes.add(i).write(src_addr.add(i).read());
+        }
+    }
     unsafe {
-        core::ptr::copy_nonoverlapping(src_addr, buffer_bytes, core::mem::size_of::<T>());
         buffer.assume_init()
     }
 }
