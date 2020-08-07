@@ -4,10 +4,12 @@
 extern crate panic_semihosting;
 extern crate stm32l4;
 
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::convert::TryInto;
 
 use byteorder::LittleEndian;
-use zerocopy::{U16, U32, FromBytes, AsBytes, Unaligned};
+use zerocopy::{U16, FromBytes, AsBytes, Unaligned};
 use cortex_m_rt::entry;
 use stm32l4::stm32l4x2 as device;
 
@@ -149,6 +151,11 @@ fn main() -> ! {
         });
     }
 
+    let btable = get_btable();
+    let buffers = get_buffers();
+
+    setup_usb_buffers(&p.USB, btable, buffers);
+
     // Output CRS status signals on PA7:0
     let mut pending_address = None;
     let mut scan_divider = 0;
@@ -192,7 +199,7 @@ fn main() -> ! {
                 let epr = p.USB.epr[ep].read();
                 // Clear CTR_RX by writing zero. Preserve other bits,
                 // including toggles. This is a real bitch with svd2rust.
-                p.USB.epr[ep].modify(|r, w| {
+                p.USB.epr[ep].modify(|_, w| {
                     zero_toggles(w).ctr_rx().bit(false)
                 });
                 // Distinguish types
@@ -211,8 +218,8 @@ fn main() -> ! {
                             (RequestTypeType::Standard, Recipient::Device) => match (setup.request_type.data_phase_direction(), StdRequestCode::from_u8(setup.request)) {
                                 (Dir::HostToDevice, Some(StdRequestCode::SetAddress)) => {
                                     pending_address = Some(setup.value.get() as u8 & 0x7F);
-                                    write_usb_sram_16(2, 0);
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                    set_ep_tx_count(&p.USB, ep, 0);
+                                    p.USB.epr[ep].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
                                             // Also reception to allow for status
@@ -221,15 +228,10 @@ fn main() -> ! {
                                     });
                                 }
                                 (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
-                                    let temp_buffer = unsafe {
-                                        core::slice::from_raw_parts_mut(
-                                            (USB_SRAM_BASE + 64) as *mut u16,
-                                            64 / 2,
-                                        )
-                                    };
-                                    match device_get_descriptor(&setup, temp_buffer) {
+                                    let txoff = get_ep_tx_offset(&p.USB, ep);
+                                    match device_get_descriptor(&setup, txoff) {
                                         Ok(len) => {
-                                            write_usb_sram_16(2, setup.length.get().min(len as u16));
+                                            set_ep_tx_count(&p.USB, ep, setup.length.get().min(len as u16));
                                             p.USB.epr[ep].modify(|r, w| {
                                                 zero_toggles(w)
                                                     .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
@@ -240,7 +242,7 @@ fn main() -> ! {
                                         }
                                         Err(_) => {
                                             // Do not transmit any data.
-                                            write_usb_sram_16(2, 0);
+                                            set_ep_tx_count(&p.USB, ep, 0);
                                             // In fact, stall.
                                             p.USB.epr[ep].modify(|r, w| {
                                                 zero_toggles(w)
@@ -253,12 +255,14 @@ fn main() -> ! {
                                     }
                                 }
                                 (Dir::HostToDevice, Some(StdRequestCode::SetConfiguration)) => {
-                                    write_usb_sram_16(2, 0);
-                                    // Prepare empty report.
-                                    write_usb_sram_16(192, 0);
-                                    write_usb_sram_16(192 + 2, 0);
-                                    write_usb_sram_16(192 + 4, 0);
-                                    write_usb_sram_16(192 + 6, 0);
+                                    set_ep_tx_count(&p.USB, ep, 0);
+                                    // Prepare empty report for EP1.
+                                    let txoff = get_ep_tx_offset(&p.USB, 1);
+                                    write_usb_sram_16(txoff, 0);
+                                    write_usb_sram_16(txoff + 2, 0);
+                                    write_usb_sram_16(txoff + 4, 0);
+                                    write_usb_sram_16(txoff + 6, 0);
+                                    set_ep_tx_count(&p.USB, 1, 8);
 
                                     // Set up EP1 for HID
                                     p.USB.epr[1].modify(|r, w| {
@@ -276,7 +280,7 @@ fn main() -> ! {
                                             .dtog_rx().bit(r.dtog_rx().bit()) // clear bit by toggle
                                             .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL (can't receive)
                                     });
-                                    p.USB.epr[0].modify(|r, w| unsafe {
+                                    p.USB.epr[0].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
                                             // Also reception to allow for status
@@ -287,9 +291,9 @@ fn main() -> ! {
                                 _ => {
                                     // Unsupported
                                     // Update transmittable count.
-                                    write_usb_sram_16(2, 0);
+                                    set_ep_tx_count(&p.USB, ep, 0);
                                     // Set a stall condition.
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                    p.USB.epr[ep].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
                                             .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
@@ -307,17 +311,17 @@ fn main() -> ! {
                                                 0x05, 0x08, 0x19, 0x01, 0x29, 0x03, 0x91, 0x02, 0x95, 0x05, 0x75, 0x01, 0x91, 0x01, 0x95, 0x06,
                                                 0x75, 0x08, 0x26, 0xff, 0x00, 0x05, 0x07, 0x19, 0x00, 0x29, 0x91, 0x81, 0x00, 0xc0,
                                             ];
-                                            write_usb_sram_bytes(64, &desc);
+                                            write_usb_sram_bytes(get_ep_tx_offset(&p.USB, 0), &desc);
                                             // Update transmittable count.
-                                            write_usb_sram_16(2, setup.length.get().min(desc.len() as u16));
+                                            set_ep_tx_count(&p.USB, ep, setup.length.get().min(desc.len() as u16));
                                         }
                                         _ => {
                                             // Unknown kind of descriptor.
-                                            write_usb_sram_16(2, 0);
+                                            set_ep_tx_count(&p.USB, ep, 0);
                                         }
                                     }
                                     // Enable transmission.
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                    p.USB.epr[ep].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
                                             // Also reception to allow for status
@@ -328,9 +332,9 @@ fn main() -> ! {
                                 _ => {
                                     // Unsupported
                                     // Update transmittable count.
-                                    write_usb_sram_16(2, 0);
+                                    set_ep_tx_count(&p.USB, ep, 0);
                                     // Set a stall condition.
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                    p.USB.epr[ep].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
                                             .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
@@ -339,8 +343,8 @@ fn main() -> ! {
                             }
                             (RequestTypeType::Class, Recipient::Interface) => match (setup.request_type.data_phase_direction(), HidRequestCode::from_u8(setup.request)) {
                                 (Dir::HostToDevice, Some(HidRequestCode::SetIdle)) => {
-                                    write_usb_sram_16(2, 0);
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                    set_ep_tx_count(&p.USB, ep, 0);
+                                    p.USB.epr[ep].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
                                             // Also reception to allow for status
@@ -350,8 +354,8 @@ fn main() -> ! {
                                 }
                                 (Dir::HostToDevice, Some(HidRequestCode::SetReport)) => {
                                     // whatever
-                                    write_usb_sram_16(2, 0);
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                    set_ep_tx_count(&p.USB, ep, 0);
+                                    p.USB.epr[ep].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
                                             // Also reception to allow for status
@@ -362,9 +366,9 @@ fn main() -> ! {
                                 _ => {
                                     // Unsupported
                                     // Update transmittable count.
-                                    write_usb_sram_16(2, 0);
+                                    set_ep_tx_count(&p.USB, ep, 0);
                                     // Set a stall condition.
-                                    p.USB.epr[ep].modify(|r, w| unsafe {
+                                    p.USB.epr[ep].modify(|r, w| {
                                         zero_toggles(w)
                                             .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
                                             .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
@@ -374,9 +378,9 @@ fn main() -> ! {
                             _ => {
                                 // Unsupported
                                 // Update transmittable count.
-                                write_usb_sram_16(2, 0);
+                                set_ep_tx_count(&p.USB, ep, 0);
                                 // Set a stall condition.
-                                p.USB.epr[ep].modify(|r, w| unsafe {
+                                p.USB.epr[ep].modify(|r, w| {
                                     zero_toggles(w)
                                         .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
                                         .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
@@ -388,7 +392,7 @@ fn main() -> ! {
                     // OUT
                     if ep == 0 {
                         // lolwut
-                        p.USB.epr[ep].modify(|r, w| unsafe {
+                        p.USB.epr[ep].modify(|r, w| {
                             zero_toggles(w)
                                 .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
                                 .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
@@ -399,7 +403,7 @@ fn main() -> ! {
                 // IN
                 if ep == 0 {
                     // Clear CTR_TX by writing 0, preserving toggles.
-                    p.USB.epr[ep].modify(|r, w| {
+                    p.USB.epr[ep].modify(|_, w| {
                         zero_toggles(w)
                             .ctr_tx().bit(false)
                     });
@@ -408,32 +412,33 @@ fn main() -> ! {
                         p.USB.daddr.write(|w| w.ef().set_bit().add().bits(addr))
                     }
 
-                    p.USB.epr[ep].modify(|r, w| unsafe {
+                    p.USB.epr[ep].modify(|r, w| {
                         zero_toggles(w)
                             .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
                     });
                 } else {
                     // Clear CTR_TX by writing 0, preserving toggles.
-                    p.USB.epr[ep].modify(|r, w| {
+                    p.USB.epr[ep].modify(|_, w| {
                         zero_toggles(w)
                             .ctr_tx().bit(false)
                     });
 
                     let mut write_idx = 2;
+                    let txoff = get_ep_tx_offset(&p.USB, 1);
                     for (dn_row, code_row) in keys_down.iter().zip(&KEYS) {
                         for (dn, code) in dn_row.iter().zip(code_row) {
                             if *dn {
-                                write_usb_sram_8(192 + write_idx, *code);
+                                write_usb_sram_8(txoff + write_idx, *code);
                                 write_idx += 1;
                             }
                         }
                     }
                     while write_idx < 8 {
-                        write_usb_sram_8(192 + write_idx, 0);
+                        write_usb_sram_8(txoff + write_idx, 0);
                         write_idx += 1;
                     }
 
-                    p.USB.epr[ep].modify(|r, w| unsafe {
+                    p.USB.epr[ep].modify(|r, w| {
                         zero_toggles(w)
                             .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
                     });
@@ -452,29 +457,29 @@ fn zero_toggles(w: &mut device::usb::epr::W) -> &mut device::usb::epr::W {
         .stat_tx().bits(0)
 }
 
-fn setup_usb(usb: &device::USB) {
+fn setup_usb_buffers(
+    usb: &device::USB,
+    btable: &'static mut [BtableSlot; 8],
+    buffers: [&'static mut [MaybeUninit<u16>; 32]; 4],
+) {
+    let [b0, b1, b2, b3] = buffers;
+
+    btable[0].configure(&mut b0[..], &mut b1[..]);
+    btable[1].configure(&mut b2[..], &mut b3[..]);
+
+    // Load base of descriptor table.
+    let btable_off = (btable.as_mut_ptr() as usize).wrapping_sub(USB_SRAM_BASE);
+    debug_assert!(btable_off < USB_SRAM_SIZE);
+    usb.btable.write(|w| unsafe { w.bits(btable_off as u32) });
+}
+
+fn setup_usb(
+    usb: &device::USB,
+) {
     usb.istr.write(|w| unsafe {
         //             v--- RESET
         w.bits(0b0111_1011_1000_0000)
     });
-
-    // Buffer layout:
-    // - Buffer table occupies 8 * 8 = 64 bytes
-    // - EP 0 IN (TX) buffer is next at 64 bytes
-    // - Then EP 0 OUT at 64
-
-    write_usb_sram_16(0, 64); // EP 0 IN
-    write_usb_sram_16(2, 0);  // no bytes valid
-    write_usb_sram_16(4, 128);  // EP 0 OUT
-    write_usb_sram_16(6, (1 << 15) | (1 << 10));  // 64 bytes
-
-    write_usb_sram_16(8, 192); // EP 0 IN
-    write_usb_sram_16(10, 8);  // 8 bytes valid
-    write_usb_sram_16(12, 256);  // EP 0 OUT
-    write_usb_sram_16(14, 0);  // no bytes
-
-    // Load base of descriptor table.
-    usb.btable.write(|w| unsafe { w.bits(0) });
 
     // Set up control EP 0 for enumeration.
     usb.epr[0].modify(|r, w| {
@@ -497,16 +502,7 @@ fn setup_usb(usb: &device::USB) {
 }
 
 const USB_SRAM_BASE: usize = 0x4000_6C00;
-
-fn read_usb_sram_8(addr: u16) -> u8 {
-    assert!(addr < 0x400);
-
-    unsafe {
-        core::ptr::read_volatile(
-            (USB_SRAM_BASE + usize::from(addr)) as *mut u8,
-        )
-    }
-}
+const USB_SRAM_SIZE: usize = 1024;
 
 fn read_usb_sram_16(addr: u16) -> u16 {
     assert!(addr < 0x3FF);
@@ -568,47 +564,11 @@ fn write_usb_sram_bytes(mut addr: u16, mut data: &[u8]) {
     }
 }
 
-fn write_high_8(dest: &mut u16, data: u8) {
-    *dest = (*dest & 0xFF) | u16::from(data) << 8
-}
-
-fn write_low_8(dest: &mut u16, data: u8) {
-    *dest = (*dest & 0xFF00) | u16::from(data)
-}
-
-/// Writes bytes from `src` into `dest` using `u16` accesses.
-///
-/// Most bytes will be packed into `u16`s and stored directly; the final byte,
-/// if the length is odd, will be stored with a read-modify-write operation.
-///
-/// `dest` must be at least as large as `src` measured in bytes; otherwise this
-/// panics. On return, the first `src.len()` bytes of `dest` are initialized.
-#[inline(never)]
-fn write_bytes(dest: &mut [u16], src: &[u8]) {
-    assert!(dest.len() >= (src.len() + 1) / 2);
-    for (d, schunk) in dest.iter_mut().zip(src.chunks_exact(2)) {
-        *d = u16::from_le_bytes(schunk.try_into().unwrap());
-    }
-    if src.len() & 1 != 0 {
-        // Handle trailing odd byte
-        write_low_8(&mut dest[src.len() / 2], src[src.len() - 1])
-    }
-}
-
-/// Stores `value` into the prefix of `dest` and returns the valid length *in
-/// bytes*.
-fn write_t(dest: &mut [u16], value: &impl AsBytes) -> usize {
-    let bytes = value.as_bytes();
-    write_bytes(dest, bytes);
-    bytes.len()
-}
-
 fn read_usb_sram<T: Sized>(addr: u16) -> T
 where T: FromBytes
 {
     assert!(addr < 0x400);
     assert!(addr + (core::mem::size_of::<T>() as u16) <= 0x400);
-    use core::mem::MaybeUninit;
 
     let mut buffer: MaybeUninit<T> = MaybeUninit::uninit();
     let buffer_bytes = buffer.as_mut_ptr() as *mut u8;
@@ -622,15 +582,6 @@ where T: FromBytes
     unsafe {
         buffer.assume_init()
     }
-}
-
-fn write_usb_sram<T: Sized>(addr: u16, value: T)
-where T: AsBytes
-{
-    assert!(addr < 0x400);
-    assert!(addr + (core::mem::size_of::<T>() as u16) <= 0x400);
-
-    write_usb_sram_bytes(addr, value.as_bytes());
 }
 
 #[derive(Clone, Debug, Default, FromBytes, AsBytes, Unaligned)]
@@ -699,18 +650,25 @@ pub enum Recipient {
     Reserved(u8),
 }
 
-fn get_ep_tx_offset(usb: &device::USB, ep: u8) -> u16 {
-    assert!(ep < 8);
-
-    let table = usb.btable.read().bits() as u16;
-    read_usb_sram_16(table + u16::from(ep) * 8)
-}
-
 fn get_ep_rx_offset(usb: &device::USB, ep: usize) -> u16 {
     assert!(ep < 8);
 
     let table = usb.btable.read().bits() as u16;
     read_usb_sram_16(table + ep as u16 * 8 + 4)
+}
+
+fn get_ep_tx_offset(usb: &device::USB, ep: usize) -> u16 {
+    assert!(ep < 8);
+
+    let table = usb.btable.read().bits() as u16;
+    read_usb_sram_16(table + ep as u16 * 8 + 0)
+}
+
+fn set_ep_tx_count(usb: &device::USB, ep: usize, count: u16) {
+    assert!(ep < 8);
+
+    let table = usb.btable.read().bits() as u16;
+    write_usb_sram_16(table + ep as u16 * 8 + 2, count)
 }
 
 #[derive(Copy, Clone, Debug, FromPrimitive, AsBytes, Unaligned)]
@@ -850,7 +808,7 @@ struct CompoundConfig {
 
 fn device_get_descriptor(
     setup: &SetupPacket,
-    buffer: &mut [u16],
+    offset: u16,
 ) -> Result<usize, ()> {
     let dtype = DescriptorType::from_u16(setup.value.get() >> 8);
     let dtype = if let Some(d) = dtype {
@@ -860,8 +818,8 @@ fn device_get_descriptor(
     };
     let idx = setup.value.get() as u8;
 
-    let mut write = |bytes| {
-        write_bytes(buffer, bytes);
+    let write = |bytes| {
+        write_usb_sram_bytes(offset, bytes);
         Ok(bytes.len())
     };
 
@@ -950,5 +908,118 @@ fn device_get_descriptor(
             // Huh?
             return Err(());
         }
+    }
+}
+
+#[derive(Debug, Default)]
+#[repr(C)]
+pub struct BtableSlot {
+    addr_tx: u16,
+    count_tx: u16,
+    addr_rx: u16,
+    count_rx: u16,
+}
+
+impl BtableSlot {
+    /// Configures this slot for a given `tx` (host IN) and `rx` (host OUT)
+    /// buffer. This is intended to be used once, during table setup.
+    ///
+    /// Requirements:
+    /// - Both references must be valid, i.e. not aliasing, aligned, etc.
+    /// - Both buffers must reside entirely within USBSRAM.
+    /// - The `rx` buffer must be at least 2 bytes long.
+    pub fn configure(
+        &mut self,
+        tx: &'static mut [MaybeUninit<u16>],
+        rx: &'static mut [MaybeUninit<u16>],
+    ) {
+        // Record the offset of `tx` in USBSRAM; its length is immaterial at
+        // this point.
+        let tx_offset = (tx.as_ptr() as usize).wrapping_sub(USB_SRAM_BASE);
+        debug_assert!(tx_offset < USB_SRAM_SIZE);
+        self.addr_tx = tx_offset as u16;
+
+        // Record both the base and length of `rx`. Only certain lengths can be
+        // recorded; `rx.len()` will be rounded _down._
+        let rx_offset = (rx.as_ptr() as usize).wrapping_sub(USB_SRAM_BASE);
+        debug_assert!(rx_offset < USB_SRAM_SIZE);
+        self.addr_rx = rx_offset as u16;
+        let (bl_size, num_block) = if rx.len() <= 62 {
+            debug_assert!(rx.len() >= 2);
+            (0, rx.len() as u16 >> 1)
+        } else {
+            debug_assert!(rx.len() <= USB_SRAM_SIZE);
+            (1, (rx.len() as u16 / 32) - 1)
+        };
+        self.count_rx = (num_block << 10) | (bl_size << 15);
+    }
+
+    /// Adjusts the `COUNT_TX` field to determine the size of packet that will
+    /// be served up in response to the next IN request to this endpoint.
+    pub fn set_tx_available(&mut self, n: usize) {
+        debug_assert!(n <= usize::from(core::u16::MAX));
+        self.count_tx = n as u16;
+    }
+
+    /// Reads the `COUNT_RX` field, giving the length of the last OUT/SETUP
+    /// packet received at this endpoint.
+    pub fn rx_available(&self) -> usize {
+        usize::from(self.count_rx & 0x3FF)
+    }
+}
+
+/// Produces a reference to a statically allocated buffer table located in
+/// USBSRAM, the first time it is called. If you call it again, it will panic.
+fn get_btable() -> &'static mut [BtableSlot; 8] {
+    static TAKEN: AtomicBool = AtomicBool::new(false);
+
+    assert!(!TAKEN.swap(true, Ordering::SeqCst));
+
+    #[link_section = ".usbram"]
+    static mut BTABLE: MaybeUninit<[BtableSlot; 8]> = MaybeUninit::uninit();
+
+    let array: &mut [MaybeUninit<BtableSlot>; 8] = unsafe {
+        core::mem::transmute(&mut BTABLE)
+    };
+
+    for slot in array.iter_mut() {
+        unsafe {
+            core::ptr::write(slot.as_mut_ptr(), BtableSlot::default());
+        }
+    }
+
+    let initialized: &mut [BtableSlot; 8] = unsafe {
+        core::mem::transmute(array)
+    };
+    initialized
+}
+
+fn get_buffers() -> [&'static mut [MaybeUninit<u16>; 32]; 4] {
+    static TAKEN: AtomicBool = AtomicBool::new(false);
+
+    assert!(!TAKEN.swap(true, Ordering::SeqCst));
+
+    #[link_section = ".usbram"]
+    static mut BUFFERS: MaybeUninit<[[u16; 32]; 4]> = MaybeUninit::uninit();
+
+    let array: &mut [MaybeUninit<[u16; 32]>; 8] = unsafe {
+        core::mem::transmute(&mut BUFFERS)
+    };
+
+    // Even though we're *acting* like this is uninitialized, let's go ahead and
+    // initialize it.
+    for slot in array.iter_mut() {
+        unsafe {
+            core::ptr::write(slot.as_mut_ptr(), [0; 32]);
+        }
+    }
+
+    unsafe {
+        [
+            core::mem::transmute(&mut array[0]),
+            core::mem::transmute(&mut array[1]),
+            core::mem::transmute(&mut array[2]),
+            core::mem::transmute(&mut array[3]),
+        ]
     }
 }
