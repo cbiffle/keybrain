@@ -17,6 +17,11 @@ use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use smart_default::SmartDefault;
 
+static KEYS: [[u8; 2]; 2] = [
+    [0x04, 0x05],
+    [0x06, 0x07],
+];
+
 #[entry]
 fn main() -> ! {
     let p = unsafe { device::Peripherals::steal() };
@@ -156,15 +161,11 @@ fn main() -> ! {
 
     setup_usb_buffers(&p.USB, btable, buffers);
 
-    // Output CRS status signals on PA7:0
-    let mut pending_address = None;
+    let mut device = Device::default();
+
     let mut scan_divider = 0;
     let mut scan_state = false;
     let mut keys_down = [[false; 2]; 2];
-    static KEYS: [[u8; 2]; 2] = [
-        [0x04, 0x05],
-        [0x06, 0x07],
-    ];
     loop {
         if scan_divider == 0 {
             // Read result of last scan.
@@ -188,7 +189,7 @@ fn main() -> ! {
 
         let istr = p.USB.istr.read();
         if istr.reset().bit() {
-            setup_usb(&p.USB);
+            device.reset(&p.USB);
             continue;
         }
         if istr.ctr().bit() {
@@ -204,245 +205,17 @@ fn main() -> ! {
                 });
                 // Distinguish types
                 if epr.setup().bit() {
-                    // SETUP
-
-                    if ep == 0 {
-                        // Just in case
-                        pending_address = None;
-
-                        // Collect request from packet memory.
-                        let rxbuf = get_ep_rx_offset(&p.USB, ep);
-                        let setup = read_usb_sram::<SetupPacket>(rxbuf);
-
-                        match (setup.request_type.type_(), setup.request_type.recipient()) {
-                            (RequestTypeType::Standard, Recipient::Device) => match (setup.request_type.data_phase_direction(), StdRequestCode::from_u8(setup.request)) {
-                                (Dir::HostToDevice, Some(StdRequestCode::SetAddress)) => {
-                                    pending_address = Some(setup.value.get() as u8 & 0x7F);
-                                    set_ep_tx_count(&p.USB, ep, 0);
-                                    p.USB.epr[ep].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                            // Also reception to allow for status
-                                            // packet
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                    });
-                                }
-                                (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
-                                    let txoff = get_ep_tx_offset(&p.USB, ep);
-                                    match device_get_descriptor(&setup, txoff) {
-                                        Ok(len) => {
-                                            set_ep_tx_count(&p.USB, ep, setup.length.get().min(len as u16));
-                                            p.USB.epr[ep].modify(|r, w| {
-                                                zero_toggles(w)
-                                                    .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                                    // Also reception to allow for status
-                                                    // packet
-                                                    .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                            });
-                                        }
-                                        Err(_) => {
-                                            // Do not transmit any data.
-                                            set_ep_tx_count(&p.USB, ep, 0);
-                                            // In fact, stall.
-                                            p.USB.epr[ep].modify(|r, w| {
-                                                zero_toggles(w)
-                                                    .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
-                                                    // Also reception to allow for status
-                                                    // packet
-                                                    .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
-                                            });
-                                        }
-                                    }
-                                }
-                                (Dir::HostToDevice, Some(StdRequestCode::SetConfiguration)) => {
-                                    set_ep_tx_count(&p.USB, ep, 0);
-                                    // Prepare empty report for EP1.
-                                    let txoff = get_ep_tx_offset(&p.USB, 1);
-                                    write_usb_sram_16(txoff, 0);
-                                    write_usb_sram_16(txoff + 2, 0);
-                                    write_usb_sram_16(txoff + 4, 0);
-                                    write_usb_sram_16(txoff + 6, 0);
-                                    set_ep_tx_count(&p.USB, 1, 8);
-
-                                    // Set up EP1 for HID
-                                    p.USB.epr[1].modify(|r, w| {
-                                        w.ea().bits(1)
-                                            .ep_type().bits(0b11) // INTERRUPT
-                                            .ep_kind().clear_bit() // not used
-
-                                            // Note: these bits are toggled by writing 1 for some goddamn
-                                            // reason, so we set them as follows. I'd love to extract a utility
-                                            // function for this but svd2rust has ensured that this is
-                                            // impossible.
-                                            .dtog_tx().bit(r.dtog_tx().bit()) // clear bit by toggle
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-
-                                            .dtog_rx().bit(r.dtog_rx().bit()) // clear bit by toggle
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL (can't receive)
-                                    });
-                                    p.USB.epr[0].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                            // Also reception to allow for status
-                                            // packet
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                    });
-                                }
-                                _ => {
-                                    // Unsupported
-                                    // Update transmittable count.
-                                    set_ep_tx_count(&p.USB, ep, 0);
-                                    // Set a stall condition.
-                                    p.USB.epr[ep].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
-                                    });
-                                }
-                            },
-                            (RequestTypeType::Standard, Recipient::Interface) => match (setup.request_type.data_phase_direction(), StdRequestCode::from_u8(setup.request)) {
-                                (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
-                                    match HidClassDescriptorType::from_u16(setup.value.get() >> 8) {
-                                        Some(HidClassDescriptorType::Report) => {
-                                            // HID Report Descriptor
-                                            let desc = [
-                                                0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
-                                                0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x03, 0x75, 0x01,
-                                                0x05, 0x08, 0x19, 0x01, 0x29, 0x03, 0x91, 0x02, 0x95, 0x05, 0x75, 0x01, 0x91, 0x01, 0x95, 0x06,
-                                                0x75, 0x08, 0x26, 0xff, 0x00, 0x05, 0x07, 0x19, 0x00, 0x29, 0x91, 0x81, 0x00, 0xc0,
-                                            ];
-                                            write_usb_sram_bytes(get_ep_tx_offset(&p.USB, 0), &desc);
-                                            // Update transmittable count.
-                                            set_ep_tx_count(&p.USB, ep, setup.length.get().min(desc.len() as u16));
-                                        }
-                                        _ => {
-                                            // Unknown kind of descriptor.
-                                            set_ep_tx_count(&p.USB, ep, 0);
-                                        }
-                                    }
-                                    // Enable transmission.
-                                    p.USB.epr[ep].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                            // Also reception to allow for status
-                                            // packet
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                    });
-                                }
-                                _ => {
-                                    // Unsupported
-                                    // Update transmittable count.
-                                    set_ep_tx_count(&p.USB, ep, 0);
-                                    // Set a stall condition.
-                                    p.USB.epr[ep].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
-                                    });
-                                }
-                            }
-                            (RequestTypeType::Class, Recipient::Interface) => match (setup.request_type.data_phase_direction(), HidRequestCode::from_u8(setup.request)) {
-                                (Dir::HostToDevice, Some(HidRequestCode::SetIdle)) => {
-                                    set_ep_tx_count(&p.USB, ep, 0);
-                                    p.USB.epr[ep].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                            // Also reception to allow for status
-                                            // packet
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                    });
-                                }
-                                (Dir::HostToDevice, Some(HidRequestCode::SetReport)) => {
-                                    // whatever
-                                    set_ep_tx_count(&p.USB, ep, 0);
-                                    p.USB.epr[ep].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                                            // Also reception to allow for status
-                                            // packet
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID
-                                    });
-                                }
-                                _ => {
-                                    // Unsupported
-                                    // Update transmittable count.
-                                    set_ep_tx_count(&p.USB, ep, 0);
-                                    // Set a stall condition.
-                                    p.USB.epr[ep].modify(|r, w| {
-                                        zero_toggles(w)
-                                            .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
-                                            .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
-                                    });
-                                }
-                            }
-                            _ => {
-                                // Unsupported
-                                // Update transmittable count.
-                                set_ep_tx_count(&p.USB, ep, 0);
-                                // Set a stall condition.
-                                p.USB.epr[ep].modify(|r, w| {
-                                    zero_toggles(w)
-                                        .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
-                                        .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
-                                });
-                            },
-                        }
-                    }
+                    device.on_setup(ep, &p.USB);
                 } else {
-                    // OUT
-                    if ep == 0 {
-                        // lolwut
-                        p.USB.epr[ep].modify(|r, w| {
-                            zero_toggles(w)
-                                .stat_tx().bits(r.stat_tx().bits() ^ 0b01) // STALL
-                                .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL
-                        });
-                    }
+                    device.on_out(ep, &p.USB);
                 }
             } else {
-                // IN
-                if ep == 0 {
-                    // Clear CTR_TX by writing 0, preserving toggles.
-                    p.USB.epr[ep].modify(|_, w| {
-                        zero_toggles(w)
-                            .ctr_tx().bit(false)
-                    });
-
-                    if let Some(addr) = pending_address.take() {
-                        p.USB.daddr.write(|w| w.ef().set_bit().add().bits(addr))
-                    }
-
-                    p.USB.epr[ep].modify(|r, w| {
-                        zero_toggles(w)
-                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                    });
-                } else {
-                    // Clear CTR_TX by writing 0, preserving toggles.
-                    p.USB.epr[ep].modify(|_, w| {
-                        zero_toggles(w)
-                            .ctr_tx().bit(false)
-                    });
-
-                    let mut write_idx = 2;
-                    let txoff = get_ep_tx_offset(&p.USB, 1);
-                    for (dn_row, code_row) in keys_down.iter().zip(&KEYS) {
-                        for (dn, code) in dn_row.iter().zip(code_row) {
-                            if *dn {
-                                write_usb_sram_8(txoff + write_idx, *code);
-                                write_idx += 1;
-                            }
-                        }
-                    }
-                    while write_idx < 8 {
-                        write_usb_sram_8(txoff + write_idx, 0);
-                        write_idx += 1;
-                    }
-
-                    p.USB.epr[ep].modify(|r, w| {
-                        zero_toggles(w)
-                            .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
-                    });
-                }
+                // Clear CTR_TX by writing 0, preserving toggles.
+                p.USB.epr[ep].modify(|_, w| {
+                    zero_toggles(w)
+                        .ctr_tx().bit(false)
+                });
+                device.on_in(ep, &p.USB, &keys_down);
             }
         }
     }
@@ -498,6 +271,7 @@ fn setup_usb(
             .stat_rx().bits(r.stat_rx().bits() ^ 0b11) // VALID (can receive)
     });
 
+    // Configure to respond to address 0.
     usb.daddr.write(|w| w.ef().set_bit());
 }
 
@@ -810,12 +584,8 @@ fn device_get_descriptor(
     setup: &SetupPacket,
     offset: u16,
 ) -> Result<usize, ()> {
-    let dtype = DescriptorType::from_u16(setup.value.get() >> 8);
-    let dtype = if let Some(d) = dtype {
-        d
-    } else {
-        panic!("wtf: {:?}", setup);
-    };
+    let dtype = DescriptorType::from_u16(setup.value.get() >> 8)
+        .ok_or(())?;
     let idx = setup.value.get() as u8;
 
     let write = |bytes| {
@@ -1022,4 +792,261 @@ fn get_buffers() -> [&'static mut [MaybeUninit<u16>; 32]; 4] {
             core::mem::transmute(&mut array[3]),
         ]
     }
+}
+
+/// Protocol states for the outermost (Device) layer.
+///
+/// These follow the names used in Figure 9-1 in the USB 2.0 specification, even
+/// though I think they are bad names.
+#[derive(Copy, Clone, Debug, SmartDefault)]
+enum DeviceState {
+    /// Because we're a bus-powered device, we start out in the "powered" state
+    /// -- since before we're powered, we don't have any state at all!
+    ///
+    /// In this state we are expecting a bus reset, but we may also be
+    /// suspended.
+    #[default]
+    Powered,
+
+    /// In the Default state, we are attached to the bus and can accept packets,
+    /// but only to set up further states. At this point the device responds to
+    /// address 0 and only address 0.
+    Default,
+
+    /// In the Address state, we have been assigned an address, but no
+    /// configuration has been selected.
+    Address,
+
+    /// In the Configured state, a configuration has been selected, and the
+    /// interface/endpoints other than EP0 are serving requests.
+    Configured,
+
+    // Suspended state will go here once I support suspension.
+}
+
+#[derive(Clone, Debug, Default)]
+struct Device {
+    state: DeviceState,
+    pending_address: Option<u8>,
+}
+
+impl Device {
+    pub fn reset(&mut self, usb: &device::USB) {
+        setup_usb(usb);
+        self.state = DeviceState::Default;
+        self.pending_address = None;
+    }
+
+    pub fn on_out(&mut self, ep: usize, usb: &device::USB) {
+        // TODO we just completely don't support OUT right now
+        configure_response(usb, ep, Status::Stall, Status::Stall);
+    }
+
+    pub fn on_setup(&mut self, ep: usize, usb: &device::USB) {
+        if ep == 0 {
+            // Reset any previously received address, if the host didn't take us
+            // through to the status phase.
+            self.pending_address = None;
+
+            // Collect the setup packet from USBSRAM.
+            let rxbuf = get_ep_rx_offset(usb, ep);
+            let setup = read_usb_sram::<SetupPacket>(rxbuf);
+
+            // Dispatch the different protocol layers.
+            match (setup.request_type.type_(), setup.request_type.recipient()) {
+                // Messages to us, the device layer:
+                (RequestTypeType::Standard, Recipient::Device) => match (setup.request_type.data_phase_direction(), StdRequestCode::from_u8(setup.request)) {
+                    (Dir::HostToDevice, Some(StdRequestCode::SetAddress)) => {
+                        // Record pending address to be set in the status phase.
+                        self.pending_address = Some(setup.value.get() as u8 & 0x7F);
+                        // The host will send an IN for the status phase; make
+                        // sure we don't send anything in response.
+                        set_ep_tx_count(usb, ep, 0);
+                        // Configure the endpoint to handle either just an IN,
+                        // or an OUT followed by an IN, because it appears that
+                        // the host is technically permitted to send a
+                        // zero-length data phase before status.
+                        configure_response(usb, ep, Status::Valid, Status::Valid);
+                    }
+
+                    (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
+                        let txoff = get_ep_tx_offset(usb, ep);
+                        match device_get_descriptor(&setup, txoff) {
+                            Ok(len) => {
+                                // A descriptor has been deposited at txoff in
+                                // USBSRAM; configure DMA to send as much of it
+                                // as the host requested.
+                                set_ep_tx_count(usb, ep, setup.length.get().min(len as u16));
+                                // ACK the next thing.
+                                configure_response(usb, ep, Status::Valid, Status::Valid);
+                            }
+                            Err(_) => {
+                                // We don't have a descriptor matching this
+                                // request.
+                                // Do not transmit any data.
+                                set_ep_tx_count(usb, ep, 0);
+                                // In fact, stall.
+                                configure_response(usb, ep, Status::Stall, Status::Stall);
+                            }
+                        }
+                    }
+                    (Dir::HostToDevice, Some(StdRequestCode::SetConfiguration)) => {
+                        // TODO this should be factored out into a configuration
+                        // layer
+                        set_ep_tx_count(usb, ep, 0);
+                        // Prepare empty report for EP1.
+                        let txoff = get_ep_tx_offset(usb, 1);
+                        write_usb_sram_16(txoff, 0);
+                        write_usb_sram_16(txoff + 2, 0);
+                        write_usb_sram_16(txoff + 4, 0);
+                        write_usb_sram_16(txoff + 6, 0);
+                        set_ep_tx_count(usb, 1, 8);
+
+                        // Set up EP1 for HID
+                        usb.epr[1].modify(|r, w| {
+                            w.ea().bits(1)
+                                .ep_type().bits(0b11) // INTERRUPT
+                                .ep_kind().clear_bit() // not used
+
+                                // Note: these bits are toggled by writing 1 for some goddamn
+                                // reason, so we set them as follows. I'd love to extract a utility
+                                // function for this but svd2rust has ensured that this is
+                                // impossible.
+                                .dtog_tx().bit(r.dtog_tx().bit()) // clear bit by toggle
+                                .stat_tx().bits(r.stat_tx().bits() ^ 0b11) // VALID
+
+                                .dtog_rx().bit(r.dtog_rx().bit()) // clear bit by toggle
+                                .stat_rx().bits(r.stat_rx().bits() ^ 0b01) // STALL (can't receive)
+                        });
+                        configure_response(usb, 0, Status::Valid, Status::Valid);
+                        self.state = DeviceState::Configured;
+                    }
+                    _ => {
+                        // Unsupported
+                        // Update transmittable count.
+                        set_ep_tx_count(usb, ep, 0);
+                        // Set a stall condition.
+                        configure_response(usb, 0, Status::Stall, Status::Stall);
+                    }
+                },
+                (RequestTypeType::Standard, Recipient::Interface) => match (setup.request_type.data_phase_direction(), StdRequestCode::from_u8(setup.request)) {
+                    (Dir::DeviceToHost, Some(StdRequestCode::GetDescriptor)) => {
+                        match HidClassDescriptorType::from_u16(setup.value.get() >> 8) {
+                            Some(HidClassDescriptorType::Report) => {
+                                // HID Report Descriptor
+                                let desc = [
+                                    0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
+                                    0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x03, 0x75, 0x01,
+                                    0x05, 0x08, 0x19, 0x01, 0x29, 0x03, 0x91, 0x02, 0x95, 0x05, 0x75, 0x01, 0x91, 0x01, 0x95, 0x06,
+                                    0x75, 0x08, 0x26, 0xff, 0x00, 0x05, 0x07, 0x19, 0x00, 0x29, 0x91, 0x81, 0x00, 0xc0,
+                                ];
+                                write_usb_sram_bytes(get_ep_tx_offset(usb, 0), &desc);
+                                // Update transmittable count.
+                                set_ep_tx_count(usb, ep, setup.length.get().min(desc.len() as u16));
+                            }
+                            _ => {
+                                // Unknown kind of descriptor.
+                                // TODO stall
+                                set_ep_tx_count(usb, ep, 0);
+                            }
+                        }
+                        // Enable transmission.
+                        configure_response(usb, ep, Status::Valid, Status::Valid);
+                    }
+                    _ => {
+                        // Unsupported
+                        // Update transmittable count.
+                        set_ep_tx_count(usb, ep, 0);
+                        // Set a stall condition.
+                        configure_response(usb, ep, Status::Stall, Status::Stall);
+                    }
+                }
+                (RequestTypeType::Class, Recipient::Interface) => match (setup.request_type.data_phase_direction(), HidRequestCode::from_u8(setup.request)) {
+                    (Dir::HostToDevice, Some(HidRequestCode::SetIdle)) => {
+                        set_ep_tx_count(usb, ep, 0);
+                        configure_response(usb, ep, Status::Valid, Status::Valid);
+                    }
+                    (Dir::HostToDevice, Some(HidRequestCode::SetReport)) => {
+                        // whatever
+                        set_ep_tx_count(usb, ep, 0);
+                        configure_response(usb, ep, Status::Valid, Status::Valid);
+                    }
+                    _ => {
+                        // Unsupported
+                        // Update transmittable count.
+                        set_ep_tx_count(usb, ep, 0);
+                        // Set a stall condition.
+                        configure_response(usb, ep, Status::Stall, Status::Stall);
+                    }
+                }
+                _ => {
+                    // Unsupported
+                    // Update transmittable count.
+                    set_ep_tx_count(usb, ep, 0);
+                    // Set a stall condition.
+                    configure_response(usb, ep, Status::Stall, Status::Stall);
+                },
+            }
+        } else {
+            // TODO SETUP to other endpoints
+            configure_response(usb, ep, Status::Stall, Status::Stall);
+        }
+    }
+
+    pub fn on_in(&mut self, ep: usize, usb: &device::USB, keys_down: &[[bool; 2]; 2]) {
+        if ep == 0 {
+            // This indicates completion of e.g. a descriptor transfer or an
+            // empty status phase.
+
+            if let Some(addr) = self.pending_address.take() {
+                usb.daddr.write(|w| w.ef().set_bit().add().bits(addr));
+                if addr == 0 {
+                    self.state = DeviceState::Default;
+                } else {
+                    self.state = DeviceState::Address;
+                }
+            }
+
+            configure_response(usb, ep, Status::Valid, Status::Valid);
+        } else {
+            // The host has just read a HID report. Prepare the next one.
+            // TODO this introduces one stage of queueing delay; the reports
+            // should be generated asynchronously.
+
+            // We have a key status matrix. We want a packed list of keycodes.
+            // Scan the matrix to convert.
+            let mut write_idx = 2;
+            let txoff = get_ep_tx_offset(usb, 1);
+            for (dn_row, code_row) in keys_down.iter().zip(&KEYS) {
+                for (dn, code) in dn_row.iter().zip(code_row) {
+                    if *dn {
+                        write_usb_sram_8(txoff + write_idx, *code);
+                        write_idx += 1;
+                    }
+                }
+            }
+            // Pad the rest of the report with zeroes.
+            while write_idx < 8 {
+                write_usb_sram_8(txoff + write_idx, 0);
+                write_idx += 1;
+            }
+
+            configure_response(usb, ep, Status::Valid, Status::Valid);
+        }
+    }
+}
+
+enum Status {
+    Disabled = 0b00,
+    Stall = 0b01,
+    Nak = 0b10,
+    Valid = 0b11,
+}
+
+fn configure_response(usb: &device::USB, ep: usize, tx: Status, rx: Status) {
+    usb.epr[ep].modify(|r, w| {
+        zero_toggles(w)
+            .stat_tx().bits(r.stat_tx().bits() ^ tx as u8)
+            .stat_rx().bits(r.stat_rx().bits() ^ rx as u8)
+    });
 }
