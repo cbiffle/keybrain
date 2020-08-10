@@ -45,8 +45,20 @@ static KEYS: [[u8; 2]; ROW_COUNT] = [
 fn main() -> ! {
     let p = unsafe { device::Peripherals::steal() };
 
-    // Turn on ports A and B.
-    p.RCC.ahb2enr.write(|w| w.gpioaen().set_bit().gpioben().set_bit());
+    // Turn on ports A and B and diagnostics on C.
+    p.RCC.ahb2enr.write(|w| w.gpioaen().set_bit().gpioben().set_bit().gpiocen().set_bit());
+
+    // Configure PC7:0 as diagnostic outputs.
+    p.GPIOC.moder.write(|w| {
+        w.moder0().output()
+            .moder1().output()
+            .moder2().output()
+            .moder3().output()
+            .moder4().output()
+            .moder5().output()
+            .moder6().output()
+            .moder7().output()
+    });
 
     // Configure SCANOUT0:1 as outputs.
     p.GPIOA.moder.write(|w| {
@@ -205,6 +217,7 @@ fn main() -> ! {
             continue;
         }
         if istr.ctr().bit() {
+            p.GPIOC.bsrr.write(|w| w.bs0().set_bit());
             // Correct Transfer
             let ep = istr.ep_id().bits() as usize;
             if istr.dir().bit() {
@@ -229,6 +242,7 @@ fn main() -> ! {
                 });
                 device.on_in(ep, &p.USB, &scan_results);
             }
+            p.GPIOC.bsrr.write(|w| w.br0().set_bit());
         }
     }
 }
