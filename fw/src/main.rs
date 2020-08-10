@@ -17,16 +17,28 @@ use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use smart_default::SmartDefault;
 
-static KEYS: [[u8; 2]; 2] = [
-    [0x04, 0x05],
-    [0x06, 0x07],
-];
-
-const ROW_COUNT: usize = 2;
+const ROW_COUNT: usize = 8;
 
 static ROW_PATTERNS: [u32; ROW_COUNT] = [
-    (1 << 0) | (1 << 17),
-    (1 << 1) | (1 << 16),
+    (1 << 0) | (0xFF ^ (1 << 0)) << 16,
+    (1 << 1) | (0xFF ^ (1 << 1)) << 16,
+    (1 << 2) | (0xFF ^ (1 << 2)) << 16,
+    (1 << 3) | (0xFF ^ (1 << 3)) << 16,
+    (1 << 4) | (0xFF ^ (1 << 4)) << 16,
+    (1 << 5) | (0xFF ^ (1 << 5)) << 16,
+    (1 << 6) | (0xFF ^ (1 << 6)) << 16,
+    (1 << 7) | (0xFF ^ (1 << 7)) << 16,
+];
+
+static KEYS: [[u8; 2]; ROW_COUNT] = [
+    [0x04, 0x05],
+    [0x06, 0x07],
+    [0x06, 0x07],
+    [0x06, 0x07],
+    [0x06, 0x07],
+    [0x06, 0x07],
+    [0x06, 0x07],
+    [0x06, 0x07],
 ];
 
 #[entry]
@@ -40,6 +52,12 @@ fn main() -> ! {
     p.GPIOA.moder.write(|w| {
         w.moder0().output()
             .moder1().output()
+            .moder2().output()
+            .moder3().output()
+            .moder4().output()
+            .moder5().output()
+            .moder6().output()
+            .moder7().output()
     });
 
     // Configure SCANIN0:1 as inputs.
@@ -53,7 +71,7 @@ fn main() -> ! {
             .pupdr1().pull_down()
     });
 
-    p.GPIOA.bsrr.write(|w| w.bs0().set_bit());
+    //p.GPIOA.bsrr.write(|w| w.bs0().set_bit());
 
     // Scale the CPU up to our max frequency of 80MHz.
     //
@@ -76,6 +94,8 @@ fn main() -> ! {
     //
     // We'll turn off the Q and R taps for now.
     
+    const MHZ: u32 = 80;
+
     // Getting to 80MHz requires the CPU to be volted at its highest setting of
     // VOS1. It _appears_ to come out of reset at VOS1. So that was easy.
 
@@ -175,6 +195,7 @@ fn main() -> ! {
         &p.RCC,
         p.DMA1,
         p.TIM2,
+        MHZ,
     );
 
     loop {

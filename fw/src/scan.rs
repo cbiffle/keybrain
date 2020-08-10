@@ -33,6 +33,7 @@ pub fn begin_dma_scan(
     rcc: &device::RCC,
     dma1: device::DMA1,
     tim2: device::TIM2,
+    timer_mhz: u32,
 ) -> &'static [AtomicU32] {
     let row_count = drive_pattern.len().min(output.len());
 
@@ -87,13 +88,14 @@ pub fn begin_dma_scan(
 
     // Turn on TIM2.
     rcc.apb1enr1.modify(|_, w| w.tim2en().set_bit());
-    // Configure TIM2 to roll over every, say, 2kHz for now.
-    // Prescaler will clock the timer at 80MHz / 80 = 1MHz.
-    tim2.psc.write(|w| unsafe { w.bits(80 - 1) });
-    // Timer rolls over at 1MHz / 500 = 2kHz.
-    tim2.arr.write(|w| unsafe { w.bits(500 - 1) });
+    // Configure TIM2 to the requested scan rate.
+    // Use prescaler to lower timer input clock to 1MHz.
+    tim2.psc.write(|w| unsafe { w.bits(timer_mhz - 1) });
+    // Aim for a 1kHz overall matrix scan rate.
+    let timer_period = 1000 / row_count as u32;
+    tim2.arr.write(|w| unsafe { w.bits(timer_period - 1) });
     // CH1 event happens halfway through because why not.
-    tim2.ccr1.write(|w| unsafe { w.bits(250) });
+    tim2.ccr1.write(|w| unsafe { w.bits(timer_period / 2) });
     // We want DRQs on both CC1 and UP.
     tim2.dier.write(|w| w.ude().set_bit().cc1de().set_bit());
     // Generate an update to get all the registers loaded.
