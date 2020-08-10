@@ -113,6 +113,12 @@ impl Hid {
                 set_ep_tx_count(usb, 0, 0);
                 configure_response(usb, 0, Status::Valid, Status::Valid);
             }
+            (Dir::HostToDevice, Some(HidRequestCode::SetProtocol)) => {
+                // whatever - our report protocol matches the boot protocol so
+                // it's all the same to us.
+                set_ep_tx_count(usb, 0, 0);
+                configure_response(usb, 0, Status::Valid, Status::Valid);
+            }
             _ => {
                 // Unsupported
                 // Update transmittable count.
