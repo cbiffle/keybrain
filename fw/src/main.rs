@@ -22,6 +22,13 @@ static KEYS: [[u8; 2]; 2] = [
     [0x06, 0x07],
 ];
 
+const ROW_COUNT: usize = 2;
+
+static ROW_PATTERNS: [u32; ROW_COUNT] = [
+    (1 << 0) | (1 << 17),
+    (1 << 1) | (1 << 16),
+];
+
 #[entry]
 fn main() -> ! {
     let p = unsafe { device::Peripherals::steal() };
@@ -124,37 +131,34 @@ fn main() -> ! {
     // Turn on the USB peripheral
     p.PWR.cr2.modify(|_, w| w.usv().set_bit());
 
-    if true {
-        // Turn on the USB peripheral.
-        p.RCC.apb1enr1.modify(|_, w| w.usbfsen().set_bit());
-        cortex_m::asm::dsb();
+    // Turn on the USB peripheral.
+    p.RCC.apb1enr1.modify(|_, w| w.usbfsen().set_bit());
+    cortex_m::asm::dsb();
 
-        // Mux the USB pins to the proper role.
-        p.GPIOA.moder.modify(|_, w| {
-            w.moder11().alternate()
-                .moder12().alternate()
-        });
-        p.GPIOA.afrh.modify(|_, w| {
-            w.afrh11().af10()
-                .afrh12().af10()
-        });
+    // Mux the USB pins to the proper role.
+    p.GPIOA.moder.modify(|_, w| {
+        w.moder11().alternate()
+            .moder12().alternate()
+    });
+    p.GPIOA.afrh.modify(|_, w| {
+        w.afrh11().af10()
+            .afrh12().af10()
+    });
 
-        // Do any configuration needed to get the sync signal generated (TBD?)
-        p.USB.cntr.modify(|_,w| w.pdwn().clear_bit());
-        cortex_m::asm::delay(80);
-        p.USB.cntr.modify(|_,w| w.fres().clear_bit());
-        p.USB.istr.write(|w| unsafe { w.bits(0) });
-        p.USB.bcdr.modify(|_, w| {
-            w.dppu().set_bit()
-        });
-        //p.USB.daddr.write(|w| w.ef().set_bit());
+    // Do any configuration needed to get the sync signal generated (TBD?)
+    p.USB.cntr.modify(|_,w| w.pdwn().clear_bit());
+    cortex_m::asm::delay(80);
+    p.USB.cntr.modify(|_,w| w.fres().clear_bit());
+    p.USB.istr.write(|w| unsafe { w.bits(0) });
+    p.USB.bcdr.modify(|_, w| {
+        w.dppu().set_bit()
+    });
 
-        // Enable the CRS
-        p.CRS.cr.modify(|_, w| {
-            w.autotrimen().set_bit()
-                .cen().set_bit()
-        });
-    }
+    // Enable the CRS
+    p.CRS.cr.modify(|_, w| {
+        w.autotrimen().set_bit()
+            .cen().set_bit()
+    });
 
     let btable = get_btable();
     let buffers = get_buffers();
@@ -163,28 +167,77 @@ fn main() -> ! {
 
     let mut device = Device::default();
 
-    let mut scan_divider = 0;
-    let mut scan_state = false;
+    // Turn on DMA1.
+    p.RCC.ahb1enr.modify(|_, w| w.dma1en().set_bit());
+    // Configure CH2 and CH5 to take DRQs from TIM2.
+    p.DMA1.cselr.write(|w| {
+        w.c2s().bits(0b100) // TIM2_UP
+            .c5s().bits(0b100) // TIM2_CH1
+    });
+    // Arrange CH2 (update) to transfer from the patterns array into BSRR.
+    p.DMA1.cndtr2.write(|w| unsafe { w.bits(ROW_COUNT as u32) });
+    p.DMA1.cmar2.write(|w| unsafe { w.bits(&ROW_PATTERNS as *const _ as u32) });
+    p.DMA1.cpar2.write(|w| unsafe { w.bits(&p.GPIOA.bsrr as *const _ as u32) });
+    p.DMA1.ccr2.write(|w| unsafe {
+        // Circular transfer forever.
+        w.circ().set_bit()
+            // Memory to peripheral.
+            .dir().set_bit()
+            // Read words from memory.
+            .msize().bits(0b10)
+            // And increment after reads.
+            .minc().set_bit()
+            // Write words to peripheral.
+            .psize().bits(0b10)
+            // Don't increment that side.
+            .pinc().clear_bit()
+            // On!
+            .en().set_bit()
+    });
+    // Arrange CH5 to transfer in response to TIM2_CH1. We'll use this to write
+    // to the scan outputs.
+    let mut scan_results = [0; ROW_COUNT];  // TODO no bad 
+    p.DMA1.cndtr5.write(|w| unsafe { w.bits(ROW_COUNT as u32) });
+    p.DMA1.cpar5.write(|w| unsafe { w.bits(&p.GPIOB.idr as *const _ as u32) });
+    p.DMA1.cmar5.write(|w| unsafe { w.bits(&mut scan_results as *mut _ as u32) });
+    p.DMA1.ccr5.write(|w| unsafe {
+        // Circular transfer forever.
+        w.circ().set_bit()
+            // Peripheral to memory.
+            .dir().clear_bit()
+            // Read words from peripheral.
+            .psize().bits(0b10)
+            // Don't increment that side.
+            .pinc().clear_bit()
+            // Write words to memory.
+            .msize().bits(0b10)
+            // And increment after writes.
+            .minc().set_bit()
+            // On!
+            .en().set_bit()
+    });
+
+    // Turn on TIM2.
+    p.RCC.apb1enr1.modify(|_, w| w.tim2en().set_bit());
+    // Configure TIM2 to roll over every, say, 2kHz for now.
+    // Prescaler will clock the timer at 80MHz / 80 = 1MHz.
+    p.TIM2.psc.write(|w| unsafe { w.bits(80 - 1) });
+    // Timer rolls over at 1MHz / 500 = 2kHz.
+    p.TIM2.arr.write(|w| unsafe { w.bits(500 - 1) });
+    // CH1 event happens halfway through because why not.
+    p.TIM2.ccr1.write(|w| unsafe { w.bits(250) });
+    // We want DRQs on both CC1 and UP.
+    p.TIM2.dier.write(|w| w.ude().set_bit().cc1de().set_bit());
+    // Generate an update to get all the registers loaded.
+    p.TIM2.egr.write(|w| w.ug().set_bit());
+    // Let's roll.
+    p.TIM2.cr1.write(|w| w.cen().set_bit());
+
     let mut keys_down = [[false; 2]; 2];
     loop {
-        if scan_divider == 0 {
-            // Read result of last scan.
-            let scan_in = p.GPIOB.idr.read().bits() & 0b11;
-            keys_down[scan_state as usize][0] = scan_in & 0b01 != 0;
-            keys_down[scan_state as usize][1] = scan_in & 0b10 != 0;
-
-            scan_state = !scan_state;
-
-            // Advance key scan state machine
-            p.GPIOA.bsrr.write(|w| unsafe {
-                let bits = u32::from(scan_state);
-                let bits = (bits << 1) | (bits ^ 1);
-                w.bits(bits | (bits ^ 0b11) << 16)
-            });
-
-            scan_divider = 100;
-        } else {
-            scan_divider -= 1;
+        for (kd, rs) in keys_down.iter_mut().zip(&scan_results) {
+            kd[0] = *rs & 0b01 != 0;
+            kd[1] = *rs & 0b10 != 0;
         }
 
         let istr = p.USB.istr.read();
