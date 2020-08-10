@@ -1,3 +1,5 @@
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use super::*;
 
 #[derive(Copy, Clone, Debug, FromPrimitive, AsBytes, Unaligned)]
@@ -129,7 +131,7 @@ impl Hid {
         }
     }
 
-    pub fn on_in(&mut self, ep: usize, usb: &device::USB, keys_down: &[[bool; 2]; 2]) {
+    pub fn on_in(&mut self, ep: usize, usb: &device::USB, scan_results: &[AtomicU32]) {
         // The host has just read a HID report. Prepare the next one.
         // TODO this introduces one stage of queueing delay; the reports
         // should be generated asynchronously.
@@ -138,9 +140,13 @@ impl Hid {
         // Scan the matrix to convert.
         let mut write_idx = 2;
         let txoff = get_ep_tx_offset(usb, 1);
-        for (dn_row, code_row) in keys_down.iter().zip(&KEYS) {
-            for (dn, code) in dn_row.iter().zip(code_row) {
-                if *dn {
+        for (scan_row, code_row) in scan_results.iter().zip(&KEYS) {
+            let scan_row = scan_row.load(Ordering::Relaxed);
+            // Note that this formulation will ignore any high-order bits if
+            // code_row is narrower than 16, and any extra entries in code_row
+            // beyond 16.
+            for (bit, code) in (0..16).zip(code_row) {
+                if scan_row & (1 << bit) != 0 {
                     write_usb_sram_8(txoff + write_idx, *code);
                     write_idx += 1;
                 }
