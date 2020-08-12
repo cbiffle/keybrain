@@ -1,0 +1,4 @@
+# WASD CODE brain replacement
+
+Turns out my CODE keyboard has a removable controller module. It's a nice
+keyboard but has really limited programmability. Let's fix that.
