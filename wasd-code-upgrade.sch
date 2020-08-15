@@ -188,22 +188,6 @@ F 3 "http://www.st.com/st-web-ui/static/active/en/resource/technical/document/da
 	1    9700 4750
 	1    0    0    -1  
 $EndComp
-Text Label 10300 4950 0    50   ~ 0
-HIGH0
-Text Label 10300 5150 0    50   ~ 0
-HIGH1
-Text Label 10300 5250 0    50   ~ 0
-HIGH2
-Text Label 10300 4550 0    50   ~ 0
-HIGH3
-Text Label 10300 4650 0    50   ~ 0
-HIGH4
-Text Label 10300 4750 0    50   ~ 0
-HIGH5
-Text Label 10300 4850 0    50   ~ 0
-HIGH6
-Text Label 10300 5050 0    50   ~ 0
-HIGH7
 Text Label 9100 6050 2    50   ~ 0
 LOW0
 Text Label 9100 5850 2    50   ~ 0
@@ -294,8 +278,6 @@ Text Label 9100 5550 2    50   ~ 0
 LOW7
 NoConn ~ 9100 3750
 NoConn ~ 9100 3850
-NoConn ~ 10300 5450
-NoConn ~ 10300 5550
 NoConn ~ 10300 6050
 Text Label 9100 5050 2    50   ~ 0
 LOW13
@@ -388,9 +370,9 @@ NoConn ~ 7800 5650
 Text Label 9100 3550 2    50   ~ 0
 ~RESET
 Text Label 10300 5450 0    50   ~ 0
-TIM1_CH2
+I2C1_SCL
 Text Label 10300 5550 0    50   ~ 0
-TIM1_CH3
+I2C1_SDA
 Text Label 10300 6050 0    50   ~ 0
 TIM2_CH1
 Wire Wire Line
@@ -415,10 +397,6 @@ Wire Wire Line
 Connection ~ 9300 2150
 Wire Wire Line
 	9300 2150 9300 2250
-Text Notes 10750 5450 0    50   ~ 0
-I2C1_SCL
-Text Notes 10750 5550 0    50   ~ 0
-I2C1_SDA
 $Comp
 L Device:C_Small C102
 U 1 1 5F46FB7C
@@ -855,7 +833,7 @@ Text Label 9100 4150 2    50   ~ 0
 STATUS1
 Text Label 9100 4250 2    50   ~ 0
 STATUS0
-Text Label 10300 5350 0    50   ~ 0
+Text Label 10300 5250 0    50   ~ 0
 BACKLIGHT_PWM
 NoConn ~ 9100 4350
 Wire Wire Line
@@ -1316,4 +1294,102 @@ Text Notes 1700 7500 0    50   ~ 10
 Keys named by PC104 convention, e.g. CAPS next to A, ALTs by SPACE, MENU by RSUP.
 Text Notes 1700 7650 0    50   ~ 10
 DIP1-6 are the configuration switches, which act like keys.
+$Comp
+L power:+3V3 #PWR0126
+U 1 1 5F3B29C9
+P 5700 4250
+F 0 "#PWR0126" H 5700 4100 50  0001 C CNN
+F 1 "+3V3" H 5715 4423 50  0000 C CNN
+F 2 "" H 5700 4250 50  0001 C CNN
+F 3 "" H 5700 4250 50  0001 C CNN
+	1    5700 4250
+	1    0    0    -1  
+$EndComp
+$Comp
+L power:GND #PWR0127
+U 1 1 5F3B302B
+P 5700 5150
+F 0 "#PWR0127" H 5700 4900 50  0001 C CNN
+F 1 "GND" H 5705 4977 50  0000 C CNN
+F 2 "" H 5700 5150 50  0001 C CNN
+F 3 "" H 5700 5150 50  0001 C CNN
+	1    5700 5150
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	5150 4650 5050 4650
+Wire Wire Line
+	5050 4650 5050 4250
+$Comp
+L power:+3V3 #PWR0128
+U 1 1 5F3B62DA
+P 5050 4250
+F 0 "#PWR0128" H 5050 4100 50  0001 C CNN
+F 1 "+3V3" H 5065 4423 50  0000 C CNN
+F 2 "" H 5050 4250 50  0001 C CNN
+F 3 "" H 5050 4250 50  0001 C CNN
+	1    5050 4250
+	1    0    0    -1  
+$EndComp
+$Comp
+L 74xx_IEEE:74HC238 U103
+U 1 1 5F3A148E
+P 5700 4550
+F 0 "U103" H 5700 5066 50  0000 C CNN
+F 1 "TC74VHC238F" H 5700 4975 50  0000 C CNN
+F 2 "vssop:VSSOP-16_3.0x4.25mm_P0.5mm" H 5700 4550 50  0001 C CNN
+F 3 "" H 5700 4550 50  0001 C CNN
+	1    5700 4550
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	5150 4350 5150 4500
+Connection ~ 5150 4500
+$Comp
+L power:GND #PWR0129
+U 1 1 5F3BB24A
+P 5150 4700
+F 0 "#PWR0129" H 5150 4450 50  0001 C CNN
+F 1 "GND" H 5155 4527 50  0000 C CNN
+F 2 "" H 5150 4700 50  0001 C CNN
+F 3 "" H 5150 4700 50  0001 C CNN
+	1    5150 4700
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	5150 4900 5000 4900
+Wire Wire Line
+	5150 5000 5000 5000
+Wire Wire Line
+	5150 5100 5000 5100
+Text Label 5000 4900 2    50   ~ 0
+EH0
+Text Label 5000 5000 2    50   ~ 0
+EH1
+Text Label 5000 5100 2    50   ~ 0
+EH2
+Text Label 6250 5050 0    50   ~ 0
+HIGH3
+Text Label 6250 4950 0    50   ~ 0
+HIGH4
+Text Label 6250 4850 0    50   ~ 0
+HIGH5
+Text Label 6250 4750 0    50   ~ 0
+HIGH6
+Text Label 6250 4650 0    50   ~ 0
+HIGH0
+Text Label 6250 4550 0    50   ~ 0
+HIGH7
+Text Label 6250 4450 0    50   ~ 0
+HIGH1
+Text Label 6250 4350 0    50   ~ 0
+HIGH2
+Wire Wire Line
+	5150 4500 5150 4700
+Text Label 10300 5150 0    50   ~ 0
+EH0
+Text Label 10300 5050 0    50   ~ 0
+EH1
+Text Label 10300 4950 0    50   ~ 0
+EH2
 $EndSCHEMATC

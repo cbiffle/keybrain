@@ -1,3 +1,4 @@
 (fp_lib_table
   (lib (name SOICbite)(type KiCad)(uri /home/cbiffle/proj/pcb/SOICbite)(options "")(descr ""))
+  (lib (name vssop)(type KiCad)(uri /home/cbiffle/proj/pcb/vssop.pretty)(options "")(descr ""))
 )
