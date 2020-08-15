@@ -4,10 +4,10 @@ EELAYER END
 $Descr A4 11693 8268
 encoding utf-8
 Sheet 1 1
-Title ""
+Title "WASD CODE v2B Replacement Controller"
 Date ""
 Rev ""
-Comp ""
+Comp "Cliff L. Biffle / cliffle.com"
 Comment1 ""
 Comment2 ""
 Comment3 ""

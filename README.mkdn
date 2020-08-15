@@ -2,3 +2,13 @@
 
 Turns out my CODE keyboard has a removable controller module. It's a nice
 keyboard but has really limited programmability. Let's fix that.
+
+---
+
+# Uploading firmware
+
+So it turns out that `dfu-util` works with the ST bootloader over USB.
+
+1. Jumper the board to boot from ROM.
+2. Get a raw binary format file.
+3. Run: `dfu-util -d 0483:df11 --alt 0 -s 0x08000000 -D path_to_file.bin`
