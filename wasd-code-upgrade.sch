@@ -1392,4 +1392,47 @@ Text Label 10300 5050 0    50   ~ 0
 EH1
 Text Label 10300 4950 0    50   ~ 0
 EH2
+$Comp
+L Connector_Generic:Conn_01x04 J103
+U 1 1 5F3EFF40
+P 1800 2550
+F 0 "J103" H 1880 2542 50  0000 L CNN
+F 1 "OLED" H 1880 2451 50  0000 L CNN
+F 2 "Connector_PinSocket_2.54mm:PinSocket_1x04_P2.54mm_Vertical_SMD_Pin1Left" H 1800 2550 50  0001 C CNN
+F 3 "~" H 1800 2550 50  0001 C CNN
+	1    1800 2550
+	1    0    0    -1  
+$EndComp
+$Comp
+L power:GND #PWR0130
+U 1 1 5F3F060A
+P 1600 2750
+F 0 "#PWR0130" H 1600 2500 50  0001 C CNN
+F 1 "GND" H 1605 2577 50  0000 C CNN
+F 2 "" H 1600 2750 50  0001 C CNN
+F 3 "" H 1600 2750 50  0001 C CNN
+	1    1600 2750
+	1    0    0    -1  
+$EndComp
+$Comp
+L power:+3V3 #PWR0131
+U 1 1 5F3F136D
+P 1600 2650
+F 0 "#PWR0131" H 1600 2500 50  0001 C CNN
+F 1 "+3V3" V 1615 2778 50  0000 L CNN
+F 2 "" H 1600 2650 50  0001 C CNN
+F 3 "" H 1600 2650 50  0001 C CNN
+	1    1600 2650
+	0    -1   -1   0   
+$EndComp
+Wire Wire Line
+	1600 2450 1150 2450
+Text Label 1150 2450 2    50   ~ 0
+I2C1_SDA
+Text Label 1150 2550 2    50   ~ 0
+I2C1_SCL
+Wire Wire Line
+	1150 2550 1600 2550
+Text Notes 950  2300 0    50   ~ 0
+MakerFocus OLED module\nhas 4k7 pullups onboard
 $EndSCHEMATC
