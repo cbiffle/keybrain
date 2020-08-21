@@ -1,0 +1,29 @@
+# Keyboard firmware
+
+This implements a basic HID keyboard using the STM32L4, in (as of this writing)
+just a smidge over 1000 lines of code and just under 9kiB of Flash.
+
+Features:
+
+- Implements a USB FS (i.e. 12mbps) keyboard. (USB LS, i.e. 1.5mbps, not
+  supported.)
+- Enlists a timer and the DMA controller to do matrix scanning entirely in
+  hardware -- software just reads a buffer to see the latest matrix state.
+- Currently implemented as one polling loop, i.e. no interrupts to reason about.
+- WASD CODE DIP switches implemented.
+  - DIP 1: swaps Caps Lock and Left Control.
+  - DIP 2: swaps Win and Alt keys (Mac layout)
+  - DIP 3: replaces Menu key with Fn key for volume control.
+  - DIP 4-6: currently unused
+- All in Rust, and mostly safe Rust.
+
+Limitations:
+
+- Currently boot protocol only (so, limited to 6 non-modifier keys down at a
+  time).
+- Does not yet support suspend/resume.
+- Does not yet feature key debouncing.
+- Media keys other than volume control not yet supported.
+- Backlight control not yet implemented.
+- Lock LEDs not implemented.
+- Written in a hurry, not well factored.
