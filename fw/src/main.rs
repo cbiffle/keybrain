@@ -19,6 +19,7 @@ use smart_default::SmartDefault;
 
 const ROW_COUNT: usize = 8;
 
+#[cfg(feature = "v1")]
 static ROW_PATTERNS: [u32; ROW_COUNT] = [
     (1 << 0) | (0xFF ^ (1 << 0)) << 16,
     (1 << 1) | (0xFF ^ (1 << 1)) << 16,
@@ -28,6 +29,19 @@ static ROW_PATTERNS: [u32; ROW_COUNT] = [
     (1 << 5) | (0xFF ^ (1 << 5)) << 16,
     (1 << 6) | (0xFF ^ (1 << 6)) << 16,
     (1 << 7) | (0xFF ^ (1 << 7)) << 16,
+];
+
+#[cfg(not(feature = "v1"))]
+static ROW_PATTERNS: [u32; ROW_COUNT] = [
+    // Bit-reversed 3-bit counter starting at pin 4.
+    (0b000 << 4) | (!0b000 << 4) << 16,
+    (0b100 << 4) | (!0b100 << 4) << 16,
+    (0b010 << 4) | (!0b010 << 4) << 16,
+    (0b110 << 4) | (!0b110 << 4) << 16,
+    (0b001 << 4) | (!0b001 << 4) << 16,
+    (0b101 << 4) | (!0b101 << 4) << 16,
+    (0b011 << 4) | (!0b011 << 4) << 16,
+    (0b111 << 4) | (!0b111 << 4) << 16,
 ];
 
 const COLS: usize = 16;
@@ -78,63 +92,51 @@ static FNKEYS: [[hid::K; COLS]; ROW_COUNT] = {
 fn main() -> ! {
     let p = unsafe { device::Peripherals::steal() };
 
-    // Turn on ports A and B and diagnostics on C.
-    p.RCC.ahb2enr.write(|w| w.gpioaen().set_bit().gpioben().set_bit().gpiocen().set_bit());
+    // Turn on ports A and B.
+    p.RCC.ahb2enr.modify(|_, w| w.gpioaen().set_bit().gpioben().set_bit());
 
-    // Configure PC7:0 as diagnostic outputs.
-    p.GPIOC.bsrr.write(|w| {
-        w.bs13().set_bit()
-            .bs14().set_bit()
-    });
-    p.GPIOC.moder.write(|w| {
-        w.moder0().output()
-            .moder1().output()
-            .moder2().output()
-            .moder3().output()
-            .moder4().output()
-            .moder5().output()
-            .moder6().output()
-            .moder7().output()
-            .moder13().output()
-            .moder14().output()
-    });
+    // Configure port A for scanout.
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "v1")] {
+            // One output line per column, backlight on A8. Backlight is active
+            // high; ensure that we don't raise it.
+            p.GPIOA.bsrr.write(|w| {
+                w.br8().set_bit()
+            });
+            p.GPIOA.moder.write(|w| {
+                w.moder0().output()
+                    .moder1().output()
+                    .moder2().output()
+                    .moder3().output()
+                    .moder4().output()
+                    .moder5().output()
+                    .moder6().output()
+                    .moder7().output()
+                    .moder8().output()
+            });
+        } else {
+            // Three scan output lines, plus status LEDs PA0:1 and backlight on
+            // A7.
 
-    // Configure SCANOUT0:1 as outputs.
-    p.GPIOA.bsrr.write(|w| {
-        w.br8().set_bit()
-    });
-    p.GPIOA.moder.write(|w| {
-        w.moder0().output()
-            .moder1().output()
-            .moder2().output()
-            .moder3().output()
-            .moder4().output()
-            .moder5().output()
-            .moder6().output()
-            .moder7().output()
-            .moder8().output()
-    });
+            // Backlight is active high; ensure that we don't raise it.
+            // Status LEDs are active low; don't blink them either.
+            p.GPIOA.bsrr.write(|w| {
+                w.br7().set_bit()
+                    .bs0().set_bit()
+                    .bs1().set_bit()
+            });
+            p.GPIOA.moder.write(|w| {
+                w.moder0().output()
+                    .moder1().output()
+                    .moder4().output()
+                    .moder5().output()
+                    .moder6().output()
+                    .moder7().output()
+            });
+        }
+    }
 
-    // Configure SCANIN0:1 as inputs.
-    p.GPIOB.moder.write(|w| {
-        w.moder0().input()
-            .moder1().input()
-            .moder2().input()
-            .moder3().input()
-            .moder4().input()
-            .moder5().input()
-            .moder6().input()
-            .moder7().input()
-            .moder8().input()
-            .moder9().input()
-            .moder10().input()
-            .moder11().input()
-            .moder12().input()
-            .moder13().input()
-            .moder14().input()
-            .moder15().input()
-    });
-    // With pull-downs for when they're floating.
+    // Apply pull-downs to make floating low-side inputs predictable.
     p.GPIOB.pupdr.write(|w| {
         w.pupdr0().pull_down()
             .pupdr1().pull_down()
@@ -153,8 +155,42 @@ fn main() -> ! {
             .pupdr14().pull_down()
             .pupdr15().pull_down()
     });
+    // And make them inputs.
+    p.GPIOB.moder.write(|w| {
+        w.moder0().input()
+            .moder1().input()
+            .moder2().input()
+            .moder3().input()
+            .moder4().input()
+            .moder5().input()
+            .moder6().input()
+            .moder7().input()
+            .moder8().input()
+            .moder9().input()
+            .moder10().input()
+            .moder11().input()
+            .moder12().input()
+            .moder13().input()
+            .moder14().input()
+            .moder15().input()
+    });
 
-    //p.GPIOA.bsrr.write(|w| w.bs0().set_bit());
+    // Also turn on and configure port C if we're using it.
+    #[cfg(feature = "v1")]
+    {
+        p.RCC.ahb2enr.modify(|_, w| w.gpiocen().set_bit());
+
+        // LEDs are active low; avoid blinking them.
+        p.GPIOC.bsrr.write(|w| {
+            w.bs13().set_bit()
+                .bs14().set_bit()
+        });
+        // Make them outputs.
+        p.GPIOC.moder.write(|w| {
+            w.moder13().output()
+                .moder14().output()
+        });
+    }
 
     // Scale the CPU up to our max frequency of 80MHz.
     //
@@ -288,7 +324,6 @@ fn main() -> ! {
             continue;
         }
         if istr.ctr().bit() {
-            p.GPIOC.bsrr.write(|w| w.bs0().set_bit());
             // Correct Transfer
             let ep = istr.ep_id().bits() as usize;
             if istr.dir().bit() {
@@ -313,7 +348,6 @@ fn main() -> ! {
                 });
                 device.on_in(ep, &p.USB, &scan_results);
             }
-            p.GPIOC.bsrr.write(|w| w.br0().set_bit());
         }
     }
 }
