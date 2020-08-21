@@ -166,6 +166,16 @@ impl Hid {
         };
         gpioc.bsrr.write(|w| w.bs1().set_bit());
 
+        let dip_switch = [
+            scan_results[4].load(Ordering::Relaxed) & (1 << 9) != 0,
+            scan_results[5].load(Ordering::Relaxed) & (1 << 9) != 0,
+            scan_results[6].load(Ordering::Relaxed) & (1 << 9) != 0,
+            scan_results[7].load(Ordering::Relaxed) & (1 << 9) != 0,
+            scan_results[0].load(Ordering::Relaxed) & (1 << 9) != 0,
+            scan_results[1].load(Ordering::Relaxed) & (1 << 9) != 0,
+        ];
+        let fn_held = scan_results[2].load(Ordering::Relaxed) & (1 << 7) != 0;
+
         // The host has just read a HID report. Prepare the next one.
         // TODO this introduces one stage of queueing delay; the reports
         // should be generated asynchronously.
@@ -173,26 +183,197 @@ impl Hid {
         gpioc.bsrr.write(|w| w.br1().set_bit());
         // We have a key status matrix. We want a packed list of keycodes.
         // Scan the matrix to convert.
-        let mut write_idx = 2;
-        let txoff = get_ep_tx_offset(usb, 1);
-        for (scan_row, code_row) in scan_results.iter().zip(&KEYS) {
+        let mut keys_written = 0;
+        let mut packet = BootKbdPacket::default();
+
+        let map = if dip_switch[2] {
+            if fn_held {
+                &FNKEYS
+            } else {
+                &KEYS
+            }
+        } else {
+            &KEYS
+        };
+        for (scan_row, code_row) in scan_results.iter().zip(map) {
             let scan_row = scan_row.load(Ordering::Relaxed);
             // Note that this formulation will ignore any high-order bits if
             // code_row is narrower than 16, and any extra entries in code_row
             // beyond 16.
             for (bit, code) in (0..16).zip(code_row) {
                 if scan_row & (1 << bit) != 0 {
-                    write_usb_sram_8(txoff + write_idx, *code);
-                    write_idx += 1;
+                    let value = {
+                        let mut value = *code;
+
+                        // HACK: apply dip switch rewrites
+                        if dip_switch[0] {
+                            // Swap left ctrl and caps lock
+                            match value {
+                                K::LC => value = K::CL,
+                                K::CL => value = K::LC,
+                                _ => (),
+                            }
+                        }
+                        if dip_switch[1] {
+                            // Swap alt and super
+                            match value {
+                                K::LA => value = K::LU,
+                                K::LU => value = K::LA,
+                                K::RA => value = K::RU,
+                                K::RU => value = K::RA,
+                                _ => (),
+                            }
+                        }
+                        if dip_switch[2] {
+                            // Fn becomes dead from USB's perspective
+                            if value == K::Cp {
+                                value = K::__
+                            }
+                        }
+                        value
+                    };
+
+                    if value >= K::LC {
+                        // Handle as modifier.
+                        let bit_number = value as u8 - K::LC as u8;
+                        packet.modifiers |= 1 << bit_number;
+                    } else if value > K::__ {
+                        // Handle as key (0 means no key or dead key).
+                        if keys_written < 6 {
+                            packet.keys_down[keys_written] = value as u8;
+                            keys_written += 1;
+                        } else if keys_written == 6 {
+                            // We have key overflow. Scribble over the packet
+                            // once and then advance keys_written to 7 so we
+                            // don't do it for further keys. (Continue scanning
+                            // to pick up modifiers.)
+                            for byte in &mut packet.keys_down {
+                                *byte = 0x01;
+                            }
+                            keys_written += 1;
+                        }
+                    }
                 }
             }
         }
-        // Pad the rest of the report with zeroes.
-        while write_idx < 8 {
-            write_usb_sram_8(txoff + write_idx, 0);
-            write_idx += 1;
-        }
+        let txoff = get_ep_tx_offset(usb, 1);
+        write_usb_sram_bytes(txoff, packet.as_bytes());
 
         configure_response(usb, ep, Status::Valid, Status::Valid);
     }
+}
+
+#[derive(Debug, Default, AsBytes)]
+#[repr(C)]
+struct BootKbdPacket {
+    modifiers: u8,
+    reserved: u8,
+    keys_down: [u8; 6],
+}
+
+/// HID Keyboard Usage codes.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(u8)]
+pub enum K {
+    __ = 0,
+
+    A = 0x04,
+    B = 0x05,
+    C = 0x06,
+    D = 0x07,
+    E = 0x08,
+    F = 0x09,
+    G = 0x0A,
+    H = 0x0B,
+    I = 0x0C,
+    J = 0x0D,
+    K = 0x0E,
+    L = 0x0F,
+    M = 0x10,
+    N = 0x11,
+    O = 0x12,
+    P = 0x13,
+    Q = 0x14,
+    R = 0x15,
+    S = 0x16,
+    T = 0x17,
+    U = 0x18,
+    V = 0x19,
+    W = 0x1A,
+    X = 0x1B,
+    Y = 0x1C,
+    Z = 0x1D,
+
+    _1 = 0x1E,
+    _2 = 0x1F,
+    _3 = 0x20,
+    _4 = 0x21,
+    _5 = 0x22,
+    _6 = 0x23,
+    _7 = 0x24,
+    _8 = 0x25,
+    _9 = 0x26,
+    _0 = 0x27,
+
+    En = 0x28,
+    Es = 0x29,
+    Bs = 0x2A,
+    Tb = 0x2B,
+    Sp = 0x2C,
+
+    Mn = 0x2D,
+    Eq = 0x2E,
+    Lb = 0x2F,
+    Rb = 0x30,
+    Bh = 0x31,
+    Sc = 0x33,
+    Ap = 0x34,
+    Gv = 0x35,
+    Cm = 0x36,
+    Pd = 0x37,
+    Sl = 0x38,
+    CL = 0x39,
+
+    F1 = 0x3A,
+    F2 = 0x3B,
+    F3 = 0x3C,
+    F4 = 0x3D,
+    F5 = 0x3E,
+    F6 = 0x3F,
+    F7 = 0x40,
+    F8 = 0x41,
+    F9 = 0x42,
+    F10 = 0x43,
+    F11 = 0x44,
+    F12 = 0x45,
+
+    PS = 0x46,
+    SL = 0x47,
+    Pa = 0x48,
+    In = 0x49,
+    Hm = 0x4A,
+    PU = 0x4B,
+    Dl = 0x4C,
+    Ed = 0x4D,
+    PD = 0x4E,
+
+    Rt = 0x4F,
+    Lt = 0x50,
+    Dn = 0x51,
+    Up = 0x52,
+
+    Cp = 0x65,
+
+    VM = 0x7F,
+    VU = 0x80,
+    VD = 0x81,
+
+    LC = 0xE0,
+    LS = 0xE1,
+    LA = 0xE2,
+    LU = 0xE3,
+    RC = 0xE4,
+    RS = 0xE5,
+    RA = 0xE6,
+    RU = 0xE7,
 }

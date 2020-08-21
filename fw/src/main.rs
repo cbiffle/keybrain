@@ -30,16 +30,49 @@ static ROW_PATTERNS: [u32; ROW_COUNT] = [
     (1 << 7) | (0xFF ^ (1 << 7)) << 16,
 ];
 
-static KEYS: [[u8; 2]; ROW_COUNT] = [
-    [0x04, 0x05],
-    [0x06, 0x07],
-    [0x06, 0x07],
-    [0x06, 0x07],
-    [0x06, 0x07],
-    [0x06, 0x07],
-    [0x06, 0x07],
-    [0x06, 0x07],
-];
+const COLS: usize = 16;
+
+// Matrix in logical order:
+//
+//  0 1  2  3  4   5  6  7  8  9  10 11 12 13 14 15
+// PD __ __ _7 F10 _0 _9 _8 Ed _4 F5 PS D1 _3 _2 _1 H0
+// __ Rt Dn N  F12 Sl __ __ Lt B  __ RA D3 __ __ __ H1
+// __ __ __ M  En  __ Pd Cm __ V  RC __ D4 C  X  Z  H2
+// __ __ Sp H  F11 Ap __ F6 Up G  __ LA D5 F4 88 Es H3
+// __ RS __ J  Bh  Sc L  K  __ F  RU __ D6 D  S  A  H4
+// __ LS __ Y  Bs  Lb F7 Rb __ T  LU Cp __ F3 CL Tb H5
+// __ __ __ U  __  P  O  I  __ R  Pa SL __ E  W  Q  H6
+// PU In Dl _6 F9  Mn F8 Eq Hm _5 LC __ D2 F2 F1 Gv H7
+
+static KEYS: [[hid::K; COLS]; ROW_COUNT] = {
+    use hid::K::*;
+    [
+    // 6 8   5   10  9   13  14  11  15  12  7   4    3   1   2    0
+    [__, Up, Ap, __, G,  F4, __, LA, Es, __, F6, F11, H,  __, Sp, __], // H3
+    [L,  __, Sc, RU, F,  D,  S,  __, A,  __, K,  Bh,  J,  RS, __, __], // H4
+    [F7, __, Lb, LU, T,  F3, CL, Cp, Tb, __, Rb, Bs,  Y,  LS, __, __], // H5
+    [O,  __, P , Pa, R,  E,  W,  SL, Q,  __, I,  __,  U,  __, __, __], // H6
+    [_9, Ed, _0, F5, _4, _3, _2, PS, _1, __, _8, F10, _7, __, __, PD], // H0
+    [F8, Hm, Mn, LC, _5, F2, F1, __, Gv, __, Eq, F9,  _6, In, Dl, PU], // H7
+    [__, Lt, Sl, __, B,  __, __, RA, __, __, __, F12, N,  Rt, Dn, __], // H1
+    [Pd, __, __, RC, V,  C,  X,  __, Z,  __, Cm, En,  M,  __, __, __], // H2
+]
+};
+
+static FNKEYS: [[hid::K; COLS]; ROW_COUNT] = {
+    use hid::K::*;
+    [
+    // 6 8   5   10  9   13  14  11  15  12  7   4    3   1   2    0
+    [__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __], // H3
+    [__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __], // H4
+    [__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __], // H5
+    [__, __, __, VM, __, __, __, __, __, __, __, __, __, __, __, __], // H6
+    [__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, VD], // H0
+    [__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, VU], // H7
+    [__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __], // H1
+    [__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __], // H2
+]
+};
 
 #[entry]
 fn main() -> ! {
@@ -49,6 +82,10 @@ fn main() -> ! {
     p.RCC.ahb2enr.write(|w| w.gpioaen().set_bit().gpioben().set_bit().gpiocen().set_bit());
 
     // Configure PC7:0 as diagnostic outputs.
+    p.GPIOC.bsrr.write(|w| {
+        w.bs13().set_bit()
+            .bs14().set_bit()
+    });
     p.GPIOC.moder.write(|w| {
         w.moder0().output()
             .moder1().output()
@@ -58,9 +95,14 @@ fn main() -> ! {
             .moder5().output()
             .moder6().output()
             .moder7().output()
+            .moder13().output()
+            .moder14().output()
     });
 
     // Configure SCANOUT0:1 as outputs.
+    p.GPIOA.bsrr.write(|w| {
+        w.br8().set_bit()
+    });
     p.GPIOA.moder.write(|w| {
         w.moder0().output()
             .moder1().output()
@@ -70,17 +112,46 @@ fn main() -> ! {
             .moder5().output()
             .moder6().output()
             .moder7().output()
+            .moder8().output()
     });
 
     // Configure SCANIN0:1 as inputs.
     p.GPIOB.moder.write(|w| {
         w.moder0().input()
             .moder1().input()
+            .moder2().input()
+            .moder3().input()
+            .moder4().input()
+            .moder5().input()
+            .moder6().input()
+            .moder7().input()
+            .moder8().input()
+            .moder9().input()
+            .moder10().input()
+            .moder11().input()
+            .moder12().input()
+            .moder13().input()
+            .moder14().input()
+            .moder15().input()
     });
     // With pull-downs for when they're floating.
     p.GPIOB.pupdr.write(|w| {
         w.pupdr0().pull_down()
             .pupdr1().pull_down()
+            .pupdr2().pull_down()
+            .pupdr3().pull_down()
+            .pupdr4().pull_down()
+            .pupdr5().pull_down()
+            .pupdr6().pull_down()
+            .pupdr7().pull_down()
+            .pupdr8().pull_down()
+            .pupdr9().pull_down()
+            .pupdr10().pull_down()
+            .pupdr11().pull_down()
+            .pupdr12().pull_down()
+            .pupdr13().pull_down()
+            .pupdr14().pull_down()
+            .pupdr15().pull_down()
     });
 
     //p.GPIOA.bsrr.write(|w| w.bs0().set_bit());
@@ -105,7 +176,7 @@ fn main() -> ! {
     // That gives us DIVN1=20, DIVP1=3.
     //
     // We'll turn off the Q and R taps for now.
-    
+
     const MHZ: u32 = 80;
 
     // Getting to 80MHz requires the CPU to be volted at its highest setting of
@@ -935,6 +1006,7 @@ impl Device {
     }
 }
 
+#[allow(dead_code)] // document variants even if we don't construct them
 enum Status {
     Disabled = 0b00,
     Stall = 0b01,
