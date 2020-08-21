@@ -1,0 +1,72 @@
+# USB notes
+
+## Control EP0
+
+Control endpoint 0 is used as a multiplexed channel for SETUP operations. A
+field in the SETUP packet selects between messages to the device (e.g.
+`SET_ADDRESS`), a numbered interface (e.g. HID `GET_DESCRIPTOR`), or a numbered
+endpoint.
+
+
+
+## Boot protocol
+
+HID is ridiculously ornate, and defines a subset for BIOSes and such. This
+subset appears to be all that most of my keyboards implement.
+
+The host receives keyboard updates using 8-byte Interrupt IN operations. These
+consist of:
+
+- A byte bitmask for the modifier keys.
+- A reserved byte.
+- Six bytes of keycodes.
+
+At any given time the packet contains the codes for six non-modifier keys that
+are currently depressed, plus the state of all modifier keys (up to 8 anyway).
+The host has to diff this against the previous state if it wants press/release
+events.
+
+The keyboard in this case does _not_ do any kind of key repeat. Keys are down or
+up.
+
+In the initial state, the keyboard will report its state whenever the host asks.
+The host can use `SET_IDLE` to change this. `SET_IDLE` asks the device to NAK
+polls until something changes or a deadline expires. The deadline part of this
+seems to have been designed to implement "keymatic repeat?" 
+
+Anyhoo, the deadline is specified in units of 4ms, which is fine since the host
+is giving us a 1ms heartbeat.
+
+- Slots in the boot packet that are not used are zeroed.
+- Key codes are filled in from left to right.
+- If keys are released, the others shift left to fill the space.
+- If too many keys are pressed, the keyboard is expected to fill all slots with
+  a "roll over" code 0x01. When the condition clears it goes back to reporting
+  the depressed keys. Modifiers are still reported during rollover condition.
+
+
+---
+
+States. Figure 9-1 in the USB 2 standard has a nice diagram. I'll use their
+terms.
+
+Powered.
+- Waiting for a USB reset.
+
+Reset.
+- Responds only on control pipe 0
+- Responds only to limited command set.
+- Can accept `SET_ADDRESS` and apply it at status packet completion.
+
+Address.
+- Responds to broader command set, but still only on control pipe 0.
+- Can share config descriptors.
+- Will accept `SET_CONFIGURATION`
+
+Configured.
+- Now complies with one of its interface descriptions, probably the sole one.
+- Other endpoints are live now
+- Further HID-level configuration can occur.
+
+
+
