@@ -1,3 +1,3 @@
 (fp_lib_table
-  (lib (name vssop)(type KiCad)(uri /home/cbiffle/proj/pcb/vssop.pretty)(options "")(descr ""))
+  (lib (name vssop)(type KiCad)(uri ${KIPRJMOD}/lib/vssop.pretty)(options "")(descr ""))
 )
