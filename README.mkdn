@@ -1,14 +1,41 @@
 # WASD CODE brain replacement
 
-Turns out my CODE keyboard has a removable controller module. It's a nice
-keyboard but has really limited programmability. Let's fix that.
+I have a CODE v2B keyboard from WASD (the kind without the numpad). It's a nice
+keyboard, but has really limited programmability. WASD has released a newer CODE
+keyboard (the v3) with some of the features I want, but the v2 is a perfectly
+good keyboard still. Why throw it away?
 
----
+It turns out that the keyboard has a removable controller module nestled above
+the arrow keys. I've designed a replacement for it that lets me do _whatever I
+want._
 
-# Uploading firmware
+![Picture of the v1 board installed in my keyboard](v1.jpg)
 
-So it turns out that `dfu-util` works with the ST bootloader over USB.
+# Status
 
-1. Jumper the board to boot from ROM.
+I have built 1x of this board and tested it (at the `fab-v1` tag). I'm
+publishing the schematic and mechanicals because I haven't seen anyone else do
+so, and I would hate for someone else to have to recreate this from scratch.
+
+I'm not prepared to provide support (particularly free support) for this design.
+Good luck!
+
+Before you ask: This board _might_ be compatible with QMK? I don't know, I don't
+use QMK.
+
+# Note on uploading firmware
+
+You can program and debug this board over SWD, but with the SWD connector in
+place, the keyboard case won't close. I've left a footprint for a TagConnect
+cable, but those are expensive -- enough so that I don't actually own one, so I
+haven't tested it!
+
+But it turns out that `dfu-util` works with the ST bootloader over USB.
+
+1. Jumper the board to boot from ROM by shorting the exposed JP101 solder pads
+   when plugging it in. (If you've never flashed the CPU, this will be the
+   default.)
 2. Get a raw binary format file.
 3. Run: `dfu-util -d 0483:df11 --alt 0 -s 0x08000000 -D path_to_file.bin`
+
+I didn't expect this to work when I started the build, so I'm pretty pleased.
