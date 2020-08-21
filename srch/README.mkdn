@@ -1,0 +1,5 @@
+# code srch
+
+This is a very simple recursive exhaustive search algorithm for packing keyboard
+matrix columns together. I used it to reduce the I/O requirements for the CODE
+v2B's matrix from 18 (which ran me out of pins) to 16 (which was ok).
