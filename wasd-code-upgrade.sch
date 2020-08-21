@@ -603,8 +603,6 @@ F 3 "~" H 6300 1250 50  0001 C CNN
 $EndComp
 Wire Wire Line
 	6300 1350 6300 1450
-Wire Wire Line
-	6300 1450 6250 1450
 Connection ~ 5950 1450
 $Comp
 L power:GND #PWR0119
@@ -805,20 +803,6 @@ Wire Wire Line
 	9500 850  9500 1550
 Wire Wire Line
 	5900 1050 6300 1050
-$Comp
-L power:PWR_FLAG #FLG0101
-U 1 1 5F4C4858
-P 6250 1450
-F 0 "#FLG0101" H 6250 1525 50  0001 C CNN
-F 1 "PWR_FLAG" H 6250 1623 50  0000 C CNN
-F 2 "" H 6250 1450 50  0001 C CNN
-F 3 "~" H 6250 1450 50  0001 C CNN
-	1    6250 1450
-	-1   0    0    1   
-$EndComp
-Connection ~ 6250 1450
-Wire Wire Line
-	5950 1450 6250 1450
 Wire Wire Line
 	9050 1850 9300 1850
 Wire Wire Line
@@ -829,9 +813,9 @@ Wire Wire Line
 Connection ~ 9300 1950
 Wire Wire Line
 	9300 1950 9300 2050
-Text Label 9100 4150 2    50   ~ 0
+Text Label 10300 4550 0    50   ~ 0
 STATUS1
-Text Label 9100 4250 2    50   ~ 0
+Text Label 10300 4650 0    50   ~ 0
 STATUS0
 Text Label 10300 5250 0    50   ~ 0
 BACKLIGHT_PWM
@@ -935,7 +919,7 @@ SPACE
 Text Notes 1700 7200 0    50   ~ 0
 DEL
 Text Notes 2000 6150 0    50   ~ 0
-6
+7
 Text Notes 2000 6300 0    50   ~ 0
 N
 Text Notes 2000 6450 0    50   ~ 0
@@ -999,7 +983,7 @@ K
 Text Notes 3250 6900 0    50   ~ 0
 ]
 Text Notes 3250 7050 0    50   ~ 0
-(|)
+i
 Text Notes 3250 7200 0    50   ~ 0
 =
 Text Notes 3550 6150 0    50   ~ 0
@@ -1041,9 +1025,9 @@ LSUP
 Text Notes 5100 6150 0    50   ~ 0
 PRTS
 Text Notes 5100 6300 0    50   ~ 0
-LALT
-Text Notes 5100 6600 0    50   ~ 0
 RALT
+Text Notes 5100 6600 0    50   ~ 0
+LALT
 Text Notes 5100 6900 0    50   ~ 0
 MENU
 Text Notes 5100 7050 0    50   ~ 0
@@ -1313,18 +1297,18 @@ F 3 "" H 3100 2950 50  0001 C CNN
 	1    0    0    -1  
 $EndComp
 Wire Wire Line
-	2550 2450 2450 2450
+	2550 2450 2400 2450
 Wire Wire Line
-	2450 2450 2450 2050
+	2400 2450 2400 2050
 $Comp
 L power:+3V3 #PWR0128
 U 1 1 5F3B62DA
-P 2450 2050
-F 0 "#PWR0128" H 2450 1900 50  0001 C CNN
-F 1 "+3V3" H 2465 2223 50  0000 C CNN
-F 2 "" H 2450 2050 50  0001 C CNN
-F 3 "" H 2450 2050 50  0001 C CNN
-	1    2450 2050
+P 2400 2050
+F 0 "#PWR0128" H 2400 1900 50  0001 C CNN
+F 1 "+3V3" H 2415 2223 50  0000 C CNN
+F 2 "" H 2400 2050 50  0001 C CNN
+F 3 "" H 2400 2050 50  0001 C CNN
+	1    2400 2050
 	1    0    0    -1  
 $EndComp
 $Comp
@@ -1338,18 +1322,15 @@ F 3 "" H 3100 2350 50  0001 C CNN
 	1    3100 2350
 	1    0    0    -1  
 $EndComp
-Wire Wire Line
-	2550 2150 2550 2300
-Connection ~ 2550 2300
 $Comp
 L power:GND #PWR0129
 U 1 1 5F3BB24A
-P 2550 2500
-F 0 "#PWR0129" H 2550 2250 50  0001 C CNN
-F 1 "GND" H 2555 2327 50  0000 C CNN
-F 2 "" H 2550 2500 50  0001 C CNN
-F 3 "" H 2550 2500 50  0001 C CNN
-	1    2550 2500
+P 2500 2500
+F 0 "#PWR0129" H 2500 2250 50  0001 C CNN
+F 1 "GND" H 2505 2327 50  0000 C CNN
+F 2 "" H 2500 2500 50  0001 C CNN
+F 3 "" H 2500 2500 50  0001 C CNN
+	1    2500 2500
 	1    0    0    -1  
 $EndComp
 Wire Wire Line
@@ -1380,8 +1361,6 @@ Text Label 3650 2250 0    50   ~ 0
 HIGH1
 Text Label 3650 2150 0    50   ~ 0
 HIGH2
-Wire Wire Line
-	2550 2300 2550 2450
 Text Label 10300 5150 0    50   ~ 0
 EH0
 Text Label 10300 5050 0    50   ~ 0
@@ -1437,9 +1416,6 @@ Wire Notes Line
 	600  550  600  2700
 Text Notes 650  2650 0    50   ~ 10
 Display
-Connection ~ 2550 2450
-Wire Wire Line
-	2550 2450 2550 2500
 Wire Notes Line
 	2100 3200 3950 3200
 Wire Notes Line
@@ -1451,4 +1427,35 @@ Wire Notes Line
 Text Notes 2150 3150 0    50   ~ 10
 3:8 Decoder
 NoConn ~ 10300 5350
+Wire Wire Line
+	5950 1450 6150 1450
+Wire Wire Line
+	2550 2150 2500 2150
+Wire Wire Line
+	2500 2150 2500 2300
+Wire Wire Line
+	2550 2300 2500 2300
+Connection ~ 2500 2300
+Wire Wire Line
+	2500 2300 2500 2500
+NoConn ~ 10300 4750
+NoConn ~ 10300 4850
+NoConn ~ 9100 4250
+NoConn ~ 9100 4150
+$Comp
+L power:PWR_FLAG #FLG0101
+U 1 1 5F423B07
+P 6150 1450
+F 0 "#FLG0101" H 6150 1525 50  0001 C CNN
+F 1 "PWR_FLAG" V 6150 1578 50  0000 L CNN
+F 2 "" H 6150 1450 50  0001 C CNN
+F 3 "~" H 6150 1450 50  0001 C CNN
+	1    6150 1450
+	-1   0    0    1   
+$EndComp
+Connection ~ 6150 1450
+Wire Wire Line
+	6150 1450 6300 1450
+Text Notes 2000 7200 0    50   ~ 0
+6
 $EndSCHEMATC
