@@ -22,7 +22,6 @@ Limitations:
 - Currently boot protocol only (so, limited to 6 non-modifier keys down at a
   time).
 - Does not yet support suspend/resume.
-- Does not yet feature key debouncing.
 - Media keys other than volume control not yet supported.
 - Backlight control not yet implemented.
 - Lock LEDs not implemented.

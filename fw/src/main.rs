@@ -304,6 +304,7 @@ fn main() -> ! {
 
     let btable = get_btable();
     let buffers = get_buffers();
+    let debounce = get_debounce_buffer();
 
     setup_usb_buffers(&p.USB, btable, buffers);
 
@@ -325,6 +326,27 @@ fn main() -> ! {
         if istr.reset().bit() {
             device.reset(&p.USB);
             continue;
+        }
+        if istr.sof().bit() {
+            // Start of Frame - 1ms synchronization message.
+            // Use this to advance the debouncing state machines.
+            // But first, clear the bit so we don't do this again until the next
+            // one arrives. This register is all write-zero-to-clear,
+            // write-one-ignored, so we want to set all bits *but* SOF --
+            // something svd2rust doesn't really grok.
+            p.USB.istr.write(|w| unsafe { w.bits(!(1 << 9)) });
+
+            for (scan_row, deb_row) in scan_results.iter().zip(&mut debounce[..]) {
+                let scan_row = scan_row.load(Ordering::Relaxed);
+                for (bit, deb) in (0..16).zip(deb_row) {
+                    let state = if scan_row & (1 << bit) != 0 {
+                        debounce::LogicalState::Closed
+                    } else {
+                        debounce::LogicalState::Open
+                    };
+                    deb.step(state);
+                }
+            }
         }
         if istr.ctr().bit() {
             // Correct Transfer
@@ -349,7 +371,7 @@ fn main() -> ! {
                     zero_toggles(w)
                         .ctr_tx().bit(false)
                 });
-                device.on_in(ep, &p.USB, &scan_results);
+                device.on_in(ep, &p.USB, &*debounce);
             }
         }
     }
@@ -1022,7 +1044,7 @@ impl Device {
         }
     }
 
-    pub fn on_in(&mut self, ep: usize, usb: &device::USB, scan_results: &[AtomicU32]) {
+    pub fn on_in(&mut self, ep: usize, usb: &device::USB, scan_results: &[[debounce::KeyState; COLS]; ROW_COUNT]) {
         if ep == 0 {
             // This indicates completion of e.g. a descriptor transfer or an
             // empty status phase.
@@ -1082,5 +1104,31 @@ fn get_scan_buffer() -> &'static mut [AtomicU32; ROW_COUNT] {
 
 }
 
+fn get_debounce_buffer() -> &'static mut [[debounce::KeyState; COLS]; ROW_COUNT] {
+    static TAKEN: AtomicBool = AtomicBool::new(false);
+
+    assert!(!TAKEN.swap(true, Ordering::SeqCst));
+
+    static mut BUFFER: MaybeUninit<[[debounce::KeyState; COLS]; ROW_COUNT]> = MaybeUninit::uninit();
+
+    let array: &mut [[MaybeUninit<debounce::KeyState>; COLS]; ROW_COUNT] = unsafe {
+        core::mem::transmute(&mut BUFFER)
+    };
+
+    for row in array.iter_mut() {
+        for slot in row {
+            unsafe {
+                core::ptr::write(slot.as_mut_ptr(), debounce::KeyState::default());
+            }
+        }
+    }
+
+    unsafe {
+        core::mem::transmute(array)
+    }
+
+}
+
+mod debounce;
 mod hid;
 mod scan;

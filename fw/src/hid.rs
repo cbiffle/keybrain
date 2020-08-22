@@ -160,21 +160,21 @@ impl Hid {
         }
     }
 
-    pub fn on_in(&mut self, ep: usize, usb: &device::USB, scan_results: &[AtomicU32]) {
+    pub fn on_in(&mut self, ep: usize, usb: &device::USB, debounce: &[[debounce::KeyState; COLS]; ROW_COUNT]) {
         let gpioc = unsafe {
             &*device::GPIOC::ptr()
         };
         gpioc.bsrr.write(|w| w.bs1().set_bit());
 
         let dip_switch = [
-            scan_results[4].load(Ordering::Relaxed) & (1 << 9) != 0,
-            scan_results[5].load(Ordering::Relaxed) & (1 << 9) != 0,
-            scan_results[6].load(Ordering::Relaxed) & (1 << 9) != 0,
-            scan_results[7].load(Ordering::Relaxed) & (1 << 9) != 0,
-            scan_results[0].load(Ordering::Relaxed) & (1 << 9) != 0,
-            scan_results[1].load(Ordering::Relaxed) & (1 << 9) != 0,
+            debounce[4][9].is_closed(),
+            debounce[5][9].is_closed(),
+            debounce[6][9].is_closed(),
+            debounce[7][9].is_closed(),
+            debounce[0][9].is_closed(),
+            debounce[1][9].is_closed(),
         ];
-        let fn_held = scan_results[2].load(Ordering::Relaxed) & (1 << 7) != 0;
+        let fn_held = debounce[2][7].is_closed();
 
         // The host has just read a HID report. Prepare the next one.
         // TODO this introduces one stage of queueing delay; the reports
@@ -195,13 +195,12 @@ impl Hid {
         } else {
             &KEYS
         };
-        for (scan_row, code_row) in scan_results.iter().zip(map) {
-            let scan_row = scan_row.load(Ordering::Relaxed);
+        for (scan_row, code_row) in debounce.iter().zip(map) {
             // Note that this formulation will ignore any high-order bits if
             // code_row is narrower than 16, and any extra entries in code_row
             // beyond 16.
-            for (bit, code) in (0..16).zip(code_row) {
-                if scan_row & (1 << bit) != 0 {
+            for (deb, code) in scan_row.iter().zip(code_row) {
+                if deb.is_closed() {
                     let value = {
                         let mut value = *code;
 
