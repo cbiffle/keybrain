@@ -80,15 +80,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cortex-m-semihosting"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "113ef0ecffee2b62b58f9380f4469099b30e9f9cbee2804771b4203ba1762cfa"
-dependencies = [
- "cortex-m",
-]
-
-[[package]]
 name = "fourk"
 version = "0.1.0"
 dependencies = [
@@ -98,7 +89,7 @@ dependencies = [
  "cortex-m-rt",
  "num-derive",
  "num-traits",
- "panic-semihosting",
+ "panic-halt",
  "smart-default",
  "stm32l4",
  "zerocopy",
@@ -143,14 +134,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "panic-semihosting"
-version = "0.5.3"
+name = "panic-halt"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c03864ac862876c16a308f5286f4aa217f1a69ac45df87ad3cd2847f818a642c"
-dependencies = [
- "cortex-m",
- "cortex-m-semihosting",
-]
+checksum = "de96540e0ebde571dc55c73d60ef407c653844e6f9a1e2fdbd40c07b9252d812"
 
 [[package]]
 name = "proc-macro2"

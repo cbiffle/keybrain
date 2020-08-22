@@ -1,7 +1,8 @@
 #![no_std]
 #![no_main]
 
-extern crate panic_semihosting;
+//extern crate panic_semihosting;
+extern crate panic_halt;
 extern crate stm32l4;
 
 use core::mem::MaybeUninit;
