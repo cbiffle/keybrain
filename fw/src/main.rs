@@ -324,9 +324,29 @@ fn main() -> ! {
 
     loop {
         let istr = p.USB.istr.read();
+
         if istr.reset().bit() {
             device.reset(&p.USB);
             continue;
+        }
+
+        //TODO: I cannot figure out how to test suspend/resume on Linux.
+        #[cfg(feature = "suspend-resume")]
+        {
+            if istr.wkup().bit() {
+                device.resume(&p.USB);
+                p.USB.istr.write(|w| unsafe {
+                    w.bits(!0)
+                        .wkup().clear_bit()
+                });
+            }
+            if istr.susp().bit() {
+                device.suspend(&p.USB);
+                p.USB.istr.write(|w| unsafe {
+                    w.bits(!0)
+                        .susp().clear_bit()
+                });
+            }
         }
         if istr.sof().bit() {
             // Start of Frame - 1ms synchronization message.
@@ -895,7 +915,7 @@ fn get_buffers() -> [&'static mut [MaybeUninit<u16>; 32]; 4] {
 ///
 /// These follow the names used in Figure 9-1 in the USB 2.0 specification, even
 /// though I think they are bad names.
-#[derive(Copy, Clone, Debug, SmartDefault)]
+#[derive(Copy, Clone, Debug, SmartDefault, Eq, PartialEq)]
 enum DeviceState {
     /// Because we're a bus-powered device, we start out in the "powered" state
     /// -- since before we're powered, we don't have any state at all!
@@ -918,12 +938,13 @@ enum DeviceState {
     /// interface/endpoints other than EP0 are serving requests.
     Configured,
 
-    // Suspended state will go here once I support suspension.
+    // Suspended is orthogonal and represented separately.
 }
 
 #[derive(Clone, Debug, Default)]
 struct Device {
     state: DeviceState,
+    suspended: bool,
     pending_address: Option<u8>,
 
     iface: hid::Hid,
@@ -932,8 +953,12 @@ struct Device {
 impl Device {
     pub fn reset(&mut self, usb: &device::USB) {
         usb.istr.write(|w| unsafe {
-            //             v--- RESET
-            w.bits(0b0111_1011_1000_0000)
+            w.bits(!0)
+                .reset().clear_bit()
+                .wkup().clear_bit()
+                .susp().clear_bit()
+                .sof().clear_bit()
+                .esof().clear_bit()
         });
 
         // Set up control EP 0 for enumeration.
@@ -956,9 +981,48 @@ impl Device {
         // Configure to respond to address 0.
         usb.daddr.write(|w| w.ef().set_bit());
         self.state = DeviceState::Default;
+        self.suspended = false;
         self.pending_address = None;
 
         self.iface = hid::Hid::default();
+    }
+
+    #[cfg(feature = "suspend-resume")]
+    pub fn suspend(&mut self, usb: &device::USB) {
+        if self.state != DeviceState::Powered {
+            // Set FSUSP bit to stop further checks on SOF reception.
+            usb.cntr.modify(|_, w| w.fsusp().set_bit());
+            // Reduce power consumption (TODO)
+            // Set LP_MODE to switch analog transceiver to low power.
+            usb.cntr.modify(|_, w| w.lpmode().set_bit());
+            self.suspended = true;
+        }
+    }
+
+    #[cfg(feature = "suspend-resume")]
+    pub fn resume(&mut self, usb: &device::USB) {
+        // Clear FSUSP bit.
+        usb.cntr.modify(|_, w| w.fsusp().clear_bit());
+        // See what happened by reading state of bus lines.
+        /*
+        let dp_dm = (usb.fnr.read().bits() >> 14) & 0b11;
+        match dp_dm {
+            0b00 => {
+                // We are being reset. The reset event should handle this.
+                self.suspended = false;
+            }
+            0b01 => {
+                // We are being resumed without a reset.
+                self.suspended = false;
+            }
+            _ => {
+                // This is a spurious wake due to noise that made it past the
+                // analog filter.
+                self.suspend(usb);
+                return;
+            }
+        }
+        */
     }
 
     pub fn on_out(&mut self, ep: usize, usb: &device::USB) {
