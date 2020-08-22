@@ -37,6 +37,13 @@ pub struct HidDescriptor {
 
 #[derive(Debug, Default, Clone)]
 pub struct Hid {
+    expected_out: Option<OutKind>,
+}
+
+#[derive(Copy, Clone, Debug, SmartDefault)]
+enum OutKind {
+    #[default]
+    SetReport
 }
 
 static BOOT_KBD_DESC: [u8; 62] = [
@@ -138,9 +145,17 @@ impl Hid {
                 configure_response(usb, 0, Status::Valid, Status::Valid);
             }
             (Dir::HostToDevice, Some(HidRequestCode::SetReport)) => {
-                // whatever
-                set_ep_tx_count(usb, 0, 0);
-                configure_response(usb, 0, Status::Valid, Status::Valid);
+                match setup.value.get() {
+                    0x02_00 => {
+                        self.expected_out = Some(OutKind::SetReport);
+                        set_ep_tx_count(usb, 0, 0);
+                        configure_response(usb, 0, Status::Valid, Status::Valid);
+                    }
+                    _ => {
+                        set_ep_tx_count(usb, 0, 0);
+                        configure_response(usb, 0, Status::Stall, Status::Stall);
+                    }
+                }
             }
             (Dir::HostToDevice, Some(HidRequestCode::SetProtocol)) => {
                 // whatever - our report protocol matches the boot protocol so
@@ -207,6 +222,18 @@ impl Hid {
         write_usb_sram_bytes(txoff, packet.as_bytes());
 
         configure_response(usb, ep, Status::Valid, Status::Valid);
+    }
+
+    pub fn on_out(&mut self, ep: usize, usb: &device::USB, kbd: &kbd::Kbd) {
+        if let Some(ok) = self.expected_out.take() {
+            match ok {
+                OutKind::SetReport => {
+                    let off = get_ep_rx_offset(usb, ep);
+                    let leds = read_usb_sram_16(off) as u8;
+                    kbd.set_hid_leds(leds);
+                }
+            }
+        }
     }
 }
 

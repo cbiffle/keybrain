@@ -219,7 +219,7 @@ fn main() -> ! {
                 if epr.setup().bit() {
                     device.on_setup(ep, &p.USB);
                 } else {
-                    device.on_out(ep, &p.USB);
+                    device.on_out(ep, &p.USB, &kbd);
                 }
             } else {
                 // Clear CTR_TX by writing 0, preserving toggles.
@@ -857,9 +857,8 @@ impl Device {
         */
     }
 
-    pub fn on_out(&mut self, ep: usize, usb: &device::USB) {
-        // TODO we just completely don't support OUT right now
-        configure_response(usb, ep, Status::Stall, Status::Stall);
+    pub fn on_out(&mut self, ep: usize, usb: &device::USB, kbd: &kbd::Kbd) {
+        self.iface.on_out(ep, usb, kbd);
     }
 
     pub fn on_setup(&mut self, ep: usize, usb: &device::USB) {
