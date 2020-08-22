@@ -351,7 +351,7 @@ fn main() -> ! {
         }
         if istr.ctr().bit() {
             // Correct Transfer
-            let ep = istr.ep_id().bits() as usize;
+            let ep = istr.ep_id().bits() as usize & 0x7;
             if istr.dir().bit() {
                 // OUT/SETUP
                 let epr = p.USB.epr[ep].read();
@@ -837,7 +837,7 @@ impl BtableSlot {
 fn get_btable() -> &'static mut [BtableSlot; 8] {
     static TAKEN: AtomicBool = AtomicBool::new(false);
 
-    assert!(!TAKEN.swap(true, Ordering::SeqCst));
+    if TAKEN.swap(true, Ordering::SeqCst) { panic!() }
 
     #[link_section = ".usbram"]
     static mut BTABLE: MaybeUninit<[BtableSlot; 8]> = MaybeUninit::uninit();
@@ -861,7 +861,7 @@ fn get_btable() -> &'static mut [BtableSlot; 8] {
 fn get_buffers() -> [&'static mut [MaybeUninit<u16>; 32]; 4] {
     static TAKEN: AtomicBool = AtomicBool::new(false);
 
-    assert!(!TAKEN.swap(true, Ordering::SeqCst));
+    if TAKEN.swap(true, Ordering::SeqCst) { panic!() }
 
     #[link_section = ".usbram"]
     static mut BUFFERS: MaybeUninit<[[u16; 32]; 4]> = MaybeUninit::uninit();
@@ -1085,7 +1085,7 @@ fn configure_response(usb: &device::USB, ep: usize, tx: Status, rx: Status) {
 fn get_scan_buffer() -> &'static mut [AtomicU32; ROW_COUNT] {
     static TAKEN: AtomicBool = AtomicBool::new(false);
 
-    assert!(!TAKEN.swap(true, Ordering::SeqCst));
+    if TAKEN.swap(true, Ordering::SeqCst) { panic!() }
 
     static mut BUFFER: MaybeUninit<[AtomicU32; ROW_COUNT]> = MaybeUninit::uninit();
 
@@ -1108,7 +1108,7 @@ fn get_scan_buffer() -> &'static mut [AtomicU32; ROW_COUNT] {
 fn get_debounce_buffer() -> &'static mut [[debounce::KeyState; COLS]; ROW_COUNT] {
     static TAKEN: AtomicBool = AtomicBool::new(false);
 
-    assert!(!TAKEN.swap(true, Ordering::SeqCst));
+    if TAKEN.swap(true, Ordering::SeqCst) { panic!() }
 
     static mut BUFFER: MaybeUninit<[[debounce::KeyState; COLS]; ROW_COUNT]> = MaybeUninit::uninit();
 

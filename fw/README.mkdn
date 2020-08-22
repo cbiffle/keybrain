@@ -1,7 +1,7 @@
 # Keyboard firmware
 
 This implements a basic HID keyboard using the STM32L4, in (as of this writing)
-just a smidge over 1000 lines of code and just under 9kiB of Flash.
+just a smidge over 1200 lines of code and just under 5kiB of Flash.
 
 Features:
 
