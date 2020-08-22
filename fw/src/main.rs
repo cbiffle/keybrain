@@ -94,6 +94,7 @@ fn main() -> ! {
 
     // Turn on ports A and B.
     p.RCC.ahb2enr.modify(|_, w| w.gpioaen().set_bit().gpioben().set_bit());
+    cortex_m::asm::dsb();
 
     // Configure port A for scanout.
     cfg_if::cfg_if! {
@@ -179,6 +180,8 @@ fn main() -> ! {
     #[cfg(feature = "v1")]
     {
         p.RCC.ahb2enr.modify(|_, w| w.gpiocen().set_bit());
+
+        cortex_m::asm::dsb();
 
         // LEDs are active low; avoid blinking them.
         p.GPIOC.bsrr.write(|w| {

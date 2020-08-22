@@ -39,6 +39,8 @@ pub fn begin_dma_scan(
 
     // Turn on DMA1.
     rcc.ahb1enr.modify(|_, w| w.dma1en().set_bit());
+    cortex_m::asm::dsb();
+
     // Configure CH2 and CH5 to take DRQs from TIM2.
     dma1.cselr.write(|w| {
         w.c2s().bits(0b100) // TIM2_UP
@@ -88,6 +90,8 @@ pub fn begin_dma_scan(
 
     // Turn on TIM2.
     rcc.apb1enr1.modify(|_, w| w.tim2en().set_bit());
+    cortex_m::asm::dsb();
+
     // Configure TIM2 to the requested scan rate.
     // Use prescaler to lower timer input clock to 1MHz.
     tim2.psc.write(|w| unsafe { w.bits(timer_mhz - 1) });
