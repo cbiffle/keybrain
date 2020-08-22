@@ -335,7 +335,10 @@ fn main() -> ! {
             // one arrives. This register is all write-zero-to-clear,
             // write-one-ignored, so we want to set all bits *but* SOF --
             // something svd2rust doesn't really grok.
-            p.USB.istr.write(|w| unsafe { w.bits(!(1 << 9)) });
+            p.USB.istr.write(|w| unsafe {
+                w.bits(!0)
+                    .sof().clear_bit()
+            });
 
             for (scan_row, deb_row) in scan_results.iter().zip(&mut debounce[..]) {
                 let scan_row = scan_row.load(Ordering::Relaxed);
