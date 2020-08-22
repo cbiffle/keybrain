@@ -9,16 +9,22 @@ It turns out that the keyboard has a removable controller module nestled above
 the arrow keys. I've designed a replacement for it that lets me do _whatever I
 want._
 
+I'm publishing the design because I'd hate for someone else to have to go
+through all the reverse engineering effort _again._
+
+I'm not prepared to provide support (particularly free support) for this design.
+Good luck!
+
 ![Picture of the v1 board installed in my keyboard](v1.jpg)
 
 # Status
 
-I have built 1x of this board and tested it (at the `fab-v1` tag). I'm
-publishing the schematic and mechanicals because I haven't seen anyone else do
-so, and I would hate for someone else to have to recreate this from scratch.
+**Hardware:** schematic and layout at the `fab-v1` tag have been built and work.
+I've made a series of changes, hopefully for the better, since that tag; these
+have not been tested.
 
-I'm not prepared to provide support (particularly free support) for this design.
-Good luck!
+**Firmware:** mostly parity with the original, except that the status LEDs and
+backlight can't be controlled yet.
 
 Before you ask: This board _might_ be compatible with QMK? I don't know, I don't
 use QMK.
