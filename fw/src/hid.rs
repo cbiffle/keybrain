@@ -1,5 +1,3 @@
-use core::sync::atomic::{AtomicU32, Ordering};
-
 use super::*;
 
 #[derive(Copy, Clone, Debug, FromPrimitive, AsBytes, Unaligned)]
@@ -160,71 +158,27 @@ impl Hid {
         }
     }
 
-    pub fn on_in(&mut self, ep: usize, usb: &device::USB, debounce: &[[debounce::KeyState; COLS]; ROW_COUNT]) {
-        let dip_switch = [
-            debounce[4][9].is_closed(),
-            debounce[5][9].is_closed(),
-            debounce[6][9].is_closed(),
-            debounce[7][9].is_closed(),
-            debounce[0][9].is_closed(),
-            debounce[1][9].is_closed(),
-        ];
-        let fn_held = debounce[2][7].is_closed();
-
+    pub fn on_in(&mut self, ep: usize, usb: &device::USB, debounce: &[[debounce::KeyState; COLS]; ROW_COUNT], kbd: &kbd::Kbd) {
         // The host has just read a HID report. Prepare the next one.
         // TODO this introduces one stage of queueing delay; the reports
         // should be generated asynchronously.
+
+        let cfg = kbd.read_configuration(debounce);
 
         // We have a key status matrix. We want a packed list of keycodes.
         // Scan the matrix to convert.
         let mut keys_written = 0;
         let mut packet = BootKbdPacket::default();
 
-        let map = if dip_switch[2] {
-            if fn_held {
-                &FNKEYS
-            } else {
-                &KEYS
-            }
-        } else {
-            &KEYS
-        };
+        let map = kbd.map_for_config(cfg);
+
         for (scan_row, code_row) in debounce.iter().zip(map) {
             // Note that this formulation will ignore any high-order bits if
             // code_row is narrower than 16, and any extra entries in code_row
             // beyond 16.
             for (deb, code) in scan_row.iter().zip(code_row) {
                 if deb.is_closed() {
-                    let value = {
-                        let mut value = *code;
-
-                        // HACK: apply dip switch rewrites
-                        if dip_switch[0] {
-                            // Swap left ctrl and caps lock
-                            match value {
-                                K::LC => value = K::CL,
-                                K::CL => value = K::LC,
-                                _ => (),
-                            }
-                        }
-                        if dip_switch[1] {
-                            // Swap alt and super
-                            match value {
-                                K::LA => value = K::LU,
-                                K::LU => value = K::LA,
-                                K::RA => value = K::RU,
-                                K::RU => value = K::RA,
-                                _ => (),
-                            }
-                        }
-                        if dip_switch[2] {
-                            // Fn becomes dead from USB's perspective
-                            if value == K::Cp {
-                                value = K::__
-                            }
-                        }
-                        value
-                    };
+                    let value = kbd.rewrite_key(cfg, *code);
 
                     if value >= K::LC {
                         // Handle as modifier.

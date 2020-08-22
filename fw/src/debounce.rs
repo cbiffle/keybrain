@@ -3,8 +3,6 @@
 //! We model the bounce of each key switch separately, because that's how
 //! physics works.
 
-use core::sync::atomic::{AtomicU8, Ordering};
-
 const DELAY: u8 = 6;
 
 /// Describes the state of a single key being debounced.
