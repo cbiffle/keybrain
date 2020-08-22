@@ -407,7 +407,7 @@ const USB_SRAM_BASE: usize = 0x4000_6C00;
 const USB_SRAM_SIZE: usize = 1024;
 
 fn read_usb_sram_16(addr: u16) -> u16 {
-    assert!(addr < 0x3FF);
+    debug_assert!(addr < 0x3FF);
 
     unsafe {
         core::ptr::read_volatile(
@@ -417,7 +417,7 @@ fn read_usb_sram_16(addr: u16) -> u16 {
 }
 
 fn write_usb_sram_16(addr: u16, data: u16) {
-    assert!(addr < 0x3FF);
+    debug_assert!(addr < 0x3FF);
 
     unsafe {
         core::ptr::write_volatile(
@@ -438,8 +438,8 @@ fn write_usb_sram_8(addr: u16, data: u8) {
 }
 
 fn write_usb_sram_bytes(mut addr: u16, mut data: &[u8]) {
-    assert!(addr < 0x400);
-    assert!(addr as usize + data.len() <= 0x400);
+    debug_assert!(addr < 0x400);
+    debug_assert!(addr as usize + data.len() <= 0x400);
 
     if addr & 1 != 0 && !data.is_empty() {
         write_usb_sram_8(addr, data[0]);
@@ -469,8 +469,8 @@ fn write_usb_sram_bytes(mut addr: u16, mut data: &[u8]) {
 fn read_usb_sram<T: Sized>(addr: u16) -> T
 where T: FromBytes
 {
-    assert!(addr < 0x400);
-    assert!(addr + (core::mem::size_of::<T>() as u16) <= 0x400);
+    debug_assert!(addr < 0x400);
+    debug_assert!(addr + (core::mem::size_of::<T>() as u16) <= 0x400);
 
     let mut buffer: MaybeUninit<T> = MaybeUninit::uninit();
     let buffer_bytes = buffer.as_mut_ptr() as *mut u8;
@@ -553,21 +553,21 @@ pub enum Recipient {
 }
 
 fn get_ep_rx_offset(usb: &device::USB, ep: usize) -> u16 {
-    assert!(ep < 8);
+    debug_assert!(ep < 8);
 
     let table = usb.btable.read().bits() as u16;
     read_usb_sram_16(table + ep as u16 * 8 + 4)
 }
 
 fn get_ep_tx_offset(usb: &device::USB, ep: usize) -> u16 {
-    assert!(ep < 8);
+    debug_assert!(ep < 8);
 
     let table = usb.btable.read().bits() as u16;
-    read_usb_sram_16(table + ep as u16 * 8 + 0)
+    read_usb_sram_16(table + ep as u16 * 8 + 0) & 0x3FF
 }
 
 fn set_ep_tx_count(usb: &device::USB, ep: usize, count: u16) {
-    assert!(ep < 8);
+    debug_assert!(ep < 8);
 
     let table = usb.btable.read().bits() as u16;
     write_usb_sram_16(table + ep as u16 * 8 + 2, count)
