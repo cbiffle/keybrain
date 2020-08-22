@@ -161,11 +161,6 @@ impl Hid {
     }
 
     pub fn on_in(&mut self, ep: usize, usb: &device::USB, debounce: &[[debounce::KeyState; COLS]; ROW_COUNT]) {
-        let gpioc = unsafe {
-            &*device::GPIOC::ptr()
-        };
-        gpioc.bsrr.write(|w| w.bs1().set_bit());
-
         let dip_switch = [
             debounce[4][9].is_closed(),
             debounce[5][9].is_closed(),
@@ -180,7 +175,6 @@ impl Hid {
         // TODO this introduces one stage of queueing delay; the reports
         // should be generated asynchronously.
 
-        gpioc.bsrr.write(|w| w.br1().set_bit());
         // We have a key status matrix. We want a packed list of keycodes.
         // Scan the matrix to convert.
         let mut keys_written = 0;
