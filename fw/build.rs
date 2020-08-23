@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 fn main() {
     linker_script_plumbing();
+    build_assembly_sources();
 }
 
 fn linker_script_plumbing() {
@@ -17,4 +18,11 @@ fn linker_script_plumbing() {
     println!("cargo:rustc-link-search={}", out.display());
 
     println!("cargo:rerun-if-changed=memory.x");
+}
+
+fn build_assembly_sources() {
+    cc::Build::new()
+        .file("asm/farjmp.S")
+        .compile("libunrusted.a");
+    println!("cargo:rerun-if-changed=asm/farjmp.S");
 }

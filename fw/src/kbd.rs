@@ -1,6 +1,6 @@
 //! Keyboard hardware interface.
 
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, Ordering};
 use core::cell::Cell;
 
 use super::device;
@@ -297,8 +297,16 @@ impl<'a> Kbd<'a> {
 
     pub fn read_configuration(&self, debounce: &[[debounce::KeyState; COLS]; ROW_COUNT]) -> u32 {
         let f12 = debounce[6][11].is_closed();
+        let esc = debounce[0][8].is_closed();
         let fn_enabled = debounce[6][9].is_closed();
         let fn_ = debounce[2][7].is_closed();
+
+        if esc && fn_enabled && fn_ {
+            // DFU!
+            super::DFU_SIGNAL.store(super::ENTER_DFU, Ordering::SeqCst);
+            cortex_m::peripheral::SCB::sys_reset();
+        }
+
         if f12 && fn_enabled && fn_ {
             if self.f12_down.get() {
                 // already handled this

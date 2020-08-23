@@ -11,7 +11,7 @@ use core::convert::TryInto;
 
 use byteorder::LittleEndian;
 use zerocopy::{U16, FromBytes, AsBytes, Unaligned};
-use cortex_m_rt::entry;
+use cortex_m_rt::{entry, pre_init};
 use stm32l4::stm32l4x2 as device;
 
 use num_derive::FromPrimitive;
@@ -19,6 +19,37 @@ use num_traits::FromPrimitive;
 use smart_default::SmartDefault;
 
 use kbd::{ROW_COUNT, COLS};
+
+static DFU_SIGNAL: AtomicU32 = AtomicU32::new(0);
+const ENTER_DFU: u32 = 0xb004d00d;
+
+#[pre_init]
+unsafe fn pre_init() {
+    extern "C" {
+        fn farjmp(sp: u32, pc: u32) -> !;
+    }
+
+    if DFU_SIGNAL.load(Ordering::Relaxed) == ENTER_DFU {
+        DFU_SIGNAL.store(0, Ordering::SeqCst);
+        // Haven't turned anything on yet, so we can use a fairly short path to
+        // the bootloader:
+        let p = device::Peripherals::steal();
+        // Enable clock to the SYSCFG block.
+        p.RCC.apb2enr.modify(|_, w| w.syscfgen().set_bit());
+        cortex_m::asm::dsb();
+        // Remap System Flash to appear at low addresses.
+        p.SYSCFG.memrmp.write(|w| w.mem_mode().bits(0b001));
+        cortex_m::asm::dsb();
+        // Turn SYSCFG back off.
+        p.RCC.apb2enr.modify(|_, w| w.syscfgen().clear_bit());
+        cortex_m::asm::dsb();
+        // Read system flash entry point and initial stack pointer.
+        let sp = *(0x1fff_0000 as *const u32);
+        let entry = *(0x1fff_0004 as *const u32);
+        // Go!
+        farjmp(sp, entry)
+    }
+}
 
 #[entry]
 fn main() -> ! {
