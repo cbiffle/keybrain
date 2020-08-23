@@ -1,6 +1,7 @@
 //! Keyboard hardware interface.
 
 use core::sync::atomic::AtomicU32;
+use core::cell::Cell;
 
 use super::device;
 use super::scan;
@@ -81,7 +82,9 @@ pub struct Kbd<'a> {
     gpioa: &'a device::GPIOA,
     gpiob: device::GPIOB,
     gpioc: &'a device::GPIOC,
-    scan_results: &'static [AtomicU32]
+    scan_results: &'static [AtomicU32],
+    backlight_on: Cell<bool>,
+    f12_down: Cell<bool>,
 }
 
 impl<'a> Kbd<'a> {
@@ -214,6 +217,8 @@ impl<'a> Kbd<'a> {
             gpiob,
             gpioc,
             scan_results,
+            backlight_on: Cell::new(false),
+            f12_down: Cell::new(false),
         }
     }
 
@@ -264,7 +269,6 @@ impl<'a> Kbd<'a> {
         }
     }
 
-    #[cfg(feature = "v1")]
     pub fn set_global_backlight(&self, level: u8) {
         cfg_if::cfg_if! {
             if #[cfg(feature = "v1")] {
@@ -292,13 +296,29 @@ impl<'a> Kbd<'a> {
     }
 
     pub fn read_configuration(&self, debounce: &[[debounce::KeyState; COLS]; ROW_COUNT]) -> u32 {
+        let f12 = debounce[6][11].is_closed();
+        let fn_enabled = debounce[6][9].is_closed();
+        let fn_ = debounce[2][7].is_closed();
+        if f12 && fn_enabled && fn_ {
+            if self.f12_down.get() {
+                // already handled this
+            } else {
+                let bl = !self.backlight_on.get();
+                self.backlight_on.set(bl);
+                self.f12_down.set(true);
+                self.set_global_backlight(if bl { 255 } else { 0 });
+            }
+        } else {
+            self.f12_down.set(false);
+        }
+
         u32::from(debounce[4][9].is_closed()) // DIP1
             | u32::from(debounce[5][9].is_closed()) << 1 // DIP2
-            | u32::from(debounce[6][9].is_closed()) << 2 // DIP3
+            | u32::from(fn_enabled) << 2 // DIP3
             | u32::from(debounce[7][9].is_closed()) << 3 // DIP4
             | u32::from(debounce[0][9].is_closed()) << 4 // DIP5
             | u32::from(debounce[1][9].is_closed()) << 5 // DIP6
-            | u32::from(debounce[2][7].is_closed()) << 6 // fn
+            | u32::from(fn_) << 6 // fn
     }
 
     pub fn map_for_config(&self, config: u32) -> &[[hid::K; COLS]; ROW_COUNT] {
@@ -313,7 +333,11 @@ impl<'a> Kbd<'a> {
     pub fn rewrite_key(&self, config: u32, mut key: hid::K) -> hid::K {
         use hid::K;
 
-        if config & (1 << 0) != 0 {
+        const DIP1: u32 = 1 << 0;
+        const DIP2: u32 = 1 << 1;
+        const DIP3: u32 = 1 << 2;
+
+        if config & DIP1 != 0 {
             // Swap left ctrl and caps lock
             match key {
                 K::LC => key = K::CL,
@@ -321,7 +345,7 @@ impl<'a> Kbd<'a> {
                 _ => (),
             }
         }
-        if config & (1 << 1) != 0 {
+        if config & DIP2 != 0 {
             // Swap alt and super
             match key {
                 K::LA => key = K::LU,
@@ -331,7 +355,7 @@ impl<'a> Kbd<'a> {
                 _ => (),
             }
         }
-        if config & (1 << 2) != 0 {
+        if config & DIP3 != 0 {
             // Fn becomes dead from USB's perspective
             if key == K::Cp {
                 key = K::__
