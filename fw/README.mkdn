@@ -23,6 +23,5 @@ Limitations:
   time).
 - Does not yet support suspend/resume.
 - Media keys other than volume control not yet supported.
-- Backlight control not yet implemented.
-- Lock LEDs not implemented.
+- Backlight brightness cannot be changed (on/off only).
 - Written in a hurry, not well factored.
