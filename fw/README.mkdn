@@ -10,11 +10,8 @@ Features:
 - Enlists a timer and the DMA controller to do matrix scanning entirely in
   hardware -- software just reads a buffer to see the latest matrix state.
 - Currently implemented as one polling loop, i.e. no interrupts to reason about.
-- WASD CODE DIP switches implemented.
-  - DIP 1: swaps Caps Lock and Left Control.
-  - DIP 2: swaps Win and Alt keys (Mac layout)
-  - DIP 3: replaces Menu key with Fn key for volume control.
-  - DIP 4-6: currently unused
+- WASD CODE DIP switches implemented, though the implementation is different
+  (see top-level project readme).
 - All in Rust, and mostly safe Rust.
 
 Limitations:

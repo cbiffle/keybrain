@@ -344,6 +344,7 @@ impl<'a> Kbd<'a> {
         const DIP1: u32 = 1 << 0;
         const DIP2: u32 = 1 << 1;
         const DIP3: u32 = 1 << 2;
+        const DIP4: u32 = 1 << 3;
 
         if config & DIP1 != 0 {
             // Swap left ctrl and caps lock
@@ -367,6 +368,13 @@ impl<'a> Kbd<'a> {
             // Fn becomes dead from USB's perspective
             if key == K::Cp {
                 key = K::__
+            }
+        }
+        if config & DIP4 != 0 {
+            // Remap RA onto Cp. NOTE: it is important that this comes _after_
+            // DIP3 processing above, since it would just smash this.
+            if key == K::RA {
+                key =  K::Cp;
             }
         }
         key

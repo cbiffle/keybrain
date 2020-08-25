@@ -39,6 +39,10 @@ meanings have changed from the stock controller.
 - DIP1: swap Left Ctrl and Caps Lock.
 - DIP2: swap Alt and Super (Mac mode).
 - DIP3: replace Menu key with Fn key.
+- DIP4: replace Right Alt key with Menu key (which is the same keycode as the
+  Compose Character key on Unix keyboards, so this effectively switches right
+  Alt to Compose -- though you will need to adjust the X layout options to make
+  this effective).
 
 When Fn is enabled (DIP3), a subset of the standard media keys are available
 (rest are TODO):
