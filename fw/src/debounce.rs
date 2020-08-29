@@ -3,7 +3,7 @@
 //! We model the bounce of each key switch separately, because that's how
 //! physics works.
 
-const DELAY: u8 = 6;
+const DELAY: u8 = 10;
 
 /// Describes the state of a single key being debounced.
 #[derive(Copy, Clone, Debug)]
