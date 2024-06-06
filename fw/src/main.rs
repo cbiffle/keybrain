@@ -6,6 +6,7 @@ extern crate panic_halt;
 extern crate stm32l4;
 
 use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use core::convert::TryInto;
 
@@ -729,7 +730,7 @@ fn get_btable() -> &'static mut [BtableSlot; 8] {
     static mut BTABLE: MaybeUninit<[BtableSlot; 8]> = MaybeUninit::uninit();
 
     let array: &mut [MaybeUninit<BtableSlot>; 8] = unsafe {
-        core::mem::transmute(&mut BTABLE)
+        core::mem::transmute(&mut *addr_of_mut!(BTABLE))
     };
 
     for slot in array.iter_mut() {
@@ -753,7 +754,7 @@ fn get_buffers() -> [&'static mut [MaybeUninit<u16>; 32]; 4] {
     static mut BUFFERS: MaybeUninit<[[u16; 32]; 4]> = MaybeUninit::uninit();
 
     let array: &mut [MaybeUninit<[u16; 32]>; 8] = unsafe {
-        core::mem::transmute(&mut BUFFERS)
+        core::mem::transmute(&mut *addr_of_mut!(BUFFERS))
     };
 
     // Even though we're *acting* like this is uninitialized, let's go ahead and
@@ -1019,7 +1020,7 @@ fn get_scan_buffer() -> &'static mut [AtomicU32; ROW_COUNT] {
     static mut BUFFER: MaybeUninit<[AtomicU32; ROW_COUNT]> = MaybeUninit::uninit();
 
     let array: &mut [MaybeUninit<AtomicU32>; ROW_COUNT] = unsafe {
-        core::mem::transmute(&mut BUFFER)
+        core::mem::transmute(&mut addr_of_mut!(BUFFER))
     };
 
     for slot in array.iter_mut() {
@@ -1042,7 +1043,7 @@ fn get_debounce_buffer() -> &'static mut [[debounce::KeyState; COLS]; ROW_COUNT]
     static mut BUFFER: MaybeUninit<[[debounce::KeyState; COLS]; ROW_COUNT]> = MaybeUninit::uninit();
 
     let array: &mut [[MaybeUninit<debounce::KeyState>; COLS]; ROW_COUNT] = unsafe {
-        core::mem::transmute(&mut BUFFER)
+        core::mem::transmute(&mut addr_of_mut!(BUFFER))
     };
 
     for row in array.iter_mut() {

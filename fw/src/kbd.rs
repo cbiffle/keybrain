@@ -80,7 +80,6 @@ static FNKEYS: [[hid::K; COLS]; ROW_COUNT] = {
 
 pub struct Kbd<'a> {
     gpioa: &'a device::GPIOA,
-    gpiob: device::GPIOB,
     gpioc: &'a device::GPIOC,
     scan_results: &'static [AtomicU32],
     backlight_on: Cell<bool>,
@@ -214,7 +213,6 @@ impl<'a> Kbd<'a> {
 
         Kbd {
             gpioa,
-            gpiob,
             gpioc,
             scan_results,
             backlight_on: Cell::new(false),
