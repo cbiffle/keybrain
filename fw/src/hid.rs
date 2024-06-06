@@ -201,18 +201,22 @@ impl Hid {
                         packet.modifiers |= 1 << bit_number;
                     } else if value > K::__ {
                         // Handle as key (0 means no key or dead key).
-                        if keys_written < 6 {
-                            packet.keys_down[keys_written] = value as u8;
-                            keys_written += 1;
-                        } else if keys_written == 6 {
-                            // We have key overflow. Scribble over the packet
-                            // once and then advance keys_written to 7 so we
-                            // don't do it for further keys. (Continue scanning
-                            // to pick up modifiers.)
-                            for byte in &mut packet.keys_down {
-                                *byte = 0x01;
+                        match keys_written {
+                            0..=5 => {
+                                packet.keys_down[keys_written] = value as u8;
+                                keys_written += 1;
                             }
-                            keys_written += 1;
+                            6 => {
+                                // We have key overflow. Scribble over the
+                                // packet once and then advance keys_written to
+                                // 7 so we don't do it for further keys.
+                                //   (Continue scanning to pick up modifiers.)
+                                for byte in &mut packet.keys_down {
+                                    *byte = 0x01;
+                                }
+                                keys_written += 1;
+                            }
+                            _ => (),
                         }
                     }
                 }
@@ -261,6 +265,7 @@ pub enum K {
     H = 0x0B,
     I = 0x0C,
     J = 0x0D,
+    #[allow(clippy::enum_variant_names)]
     K = 0x0E,
     L = 0x0F,
     M = 0x10,

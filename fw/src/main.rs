@@ -450,7 +450,7 @@ fn get_ep_tx_offset(usb: &device::USB, ep: usize) -> u16 {
     debug_assert!(ep < 8);
 
     let table = usb.btable.read().bits() as u16;
-    read_usb_sram_16(table + ep as u16 * 8 + 0) & 0x3FF
+    read_usb_sram_16(table + ep as u16 * 8) & 0x3FF
 }
 
 fn set_ep_tx_count(usb: &device::USB, ep: usize, count: u16) {
@@ -651,13 +651,13 @@ fn device_get_descriptor(
                     ])
                 }
                 _ => {
-                    return Err(());
+                    Err(())
                 }
             }
         }
         _ => {
             // Huh?
-            return Err(());
+            Err(())
         }
     }
 }

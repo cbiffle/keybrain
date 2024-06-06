@@ -25,6 +25,7 @@ use stm32l4::stm32l4x2 as device;
 ///   GPIO ports generically).
 /// - `drive_pattern` and `output` should be the same length, but if they
 ///   aren't, the minimum of the two lengths will be used.
+#[allow(clippy::too_many_arguments)]
 pub fn begin_dma_scan(
     drive_port: &device::GPIOA,
     drive_pattern: &'static [u32],

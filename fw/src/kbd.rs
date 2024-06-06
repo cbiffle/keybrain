@@ -87,6 +87,7 @@ pub struct Kbd<'a> {
 }
 
 impl<'a> Kbd<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn configure(
         gpioa: &'a device::GPIOA,
         gpiob: device::GPIOB,
